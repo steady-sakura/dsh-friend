@@ -6,7 +6,7 @@
 
 ## 安装到 DSH
 
-需要 Node.js 22.12+，建议使用 DSH 0.2.0-rc.2。插件使用 Cordis 的 `commands` 服务注册命令，不需要编译。
+需要 Node.js 22.12+，建议使用 DSH 0.2.0-rc.2。插件使用 Cordis 的 `commands`、`pluginManager` 与 `profileContext` 服务，不需要编译。
 
 ```powershell
 dsh plugin --profile web add github:steady-sakura/dsh-friend
@@ -32,6 +32,22 @@ Windows 也可双击 `启动桌面陪伴.cmd`。有现成 DSH Electron 时，直
 已经打开时再执行 `/friend`，通过父子 IPC 唤回原窗口，最小化时恢复，不冷启动另一套桌宠，也不重置共享、草稿或选择页面。启动和显示均有确认；超时不杀已有进程。桌宠入口没有固定钟点限制，不根据模型多久没回复来判断掉线。
 
 更新后先结束使用并关闭桌宠，再正常打开。设置页显示实际加载的运行版本。不会为升级自动重启宿主；插件使用自己的 API，不连接其他项目的主程序。用户关闭桌宠不停止 DSH；宿主明确停用插件时，会关闭对应桌宠并显示本机原因提示。
+
+## 卸载与资料保留（0.4.0 起）
+
+从 DSH 用 `/friend` 打开桌宠，在 **API 与偏好设置 → 卸载插件…** 操作；也可在 DSH 输入 **`/friend-uninstall`** 打开同一个本机确认窗口。模型没有卸载工具，命令本身只打开确认，不直接删除。
+
+确认窗口显示当前 DSH 配置名和实际数据目录，可选：
+
+- **取消**：插件、共享和资料保持原状。
+- **卸载并保留资料**：从当前 DSH 配置移除插件，保留聊天、日记、摘记、草稿、精选及 API 设置，重装后可继续使用。
+- **卸载并删除资料**：移除成功后，再清理插件自己的上述资料、密钥密文、去重记录及缓存。退出桌宠后由临时清理程序释放占用并完成删除，最后显示本机结果。
+
+先结束共享、取消 API 请求、保存草稿与排队写入并关闭素材窗口，再调用宿主的固定 `removeBundle('dsh-friend')` 接口。移除失败、结果不明或宿主断开时不启动资料清理；保存失败也不会继续移除。卸载自身时不会打断确认结果回传。卸载只移除当前配置中的安装包，不删除源码检出目录或 DSH 共用的 Electron。
+
+**导入的角色与记忆原始文件夹保持不变**，即使原文件夹放在数据目录内也会保护。只删除具有本插件归属标记的目录中的固定资料和缓存名称；未知文件保留，不跟随符号链接或目录联接。归属无法确认、目录含项目文件时，只允许保留资料。多个 DSH 配置共用默认资料目录，选择删除会影响其他配置对这些资料的读取，确认窗口会说明。
+
+独立源码启动的桌宠没有宿主卸载权限：先退出，再从对应 DSH 配置用 `/friend` 打开。正常 DSH 的插件管理服务负责实际移除；自定义宿主若不支持运行中卸载，会提示先停止配置，资料保留。直接使用 DSH 自带插件管理器或 CLI 移除不会经过本插件的资料询问，因此也不会自动删除本机资料。接口依据 [DSH 插件管理说明](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/boot/plugin-manager)。
 
 ## 怎么相处
 
@@ -113,9 +129,12 @@ API 设置页有两个独立入口：**选择角色文件夹**、**选择记忆�
 npm test
 npm run check
 npm run test:desktop
+npm run test:uninstall
 npm pack --dry-run
 ```
 
 测试使用模拟 API，不需要真实密钥。检查脚本验证 106 个素材的 SHA256、JavaScript 语法和发布目录中的疑似隐私内容。`test:desktop` 需要桌面环境与 Electron，使用隔离资料、本机模拟 API 和自建色块窗口，验证实际 IPC 唤回、连续回复预览、草稿重载及发送竞态、历史分页不重放、角色与记忆、动画确认、共享复用、精确帧保存及暂停/结束，不采集其他应用画面。证据仅留本机 `evidence/`，不提交。Windows 桌面端已实测；macOS / Linux 的实际窗口与系统录屏授权仍需对应平台实测。
+
+`test:uninstall` 在隔离目录用合成资料和模拟宿主移除结果验证取消、保留、删除、失败四条真实 Electron 流程；不调用用户当前配置的卸载接口，不删除用户资料。
 
 API 格式及默认模型依据 [DeepSeek 官方文档](https://api-docs.deepseek.com/quick_start)；密钥保护与屏幕采集分别使用 Electron [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)、[desktopCapturer](https://www.electronjs.org/docs/latest/api/desktop-capturer)。

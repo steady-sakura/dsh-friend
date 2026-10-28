@@ -13,9 +13,13 @@ async function start() {
   app.setName('dsh-friend')
   const sendParent = message => { if (process.connected) { try { process.send(message, () => {}) } catch {} } }
   const version = require('../package.json').version
-  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1 }
+  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1, uninstall: 1 }
   // Personal state never lives in the installed plugin or working repository.
   const dataDir = process.env.DSH_FRIEND_DATA_DIR || join(app.getPath('appData'), 'dsh-friend')
+  const { ensureDataOwner, makeCleanupPlan } = await import('../src/uninstall-data.mjs')
+  const { stageUninstall, startCleanupWorker } = await import('../src/uninstall-stage.mjs')
+  const { UninstallFlow } = await import('../src/uninstall-flow.mjs')
+  const dataOwner = await ensureDataOwner(dataDir, { packageRoot: join(__dirname, '..') })
   app.setPath('userData', dataDir)
   if (!app.requestSingleInstanceLock()) {
     if (process.connected) { try { process.send({ type: 'dsh-friend-forwarded' }, () => app.quit()) } catch { app.quit() } } else app.quit()
@@ -26,7 +30,7 @@ async function start() {
   const store = new Store(dataDir); await store.init()
   const vault = new Vault(store, safeStorage); await vault.init()
   const api = new API()
-  let closing = false, settingsWindow, captureWindow, captureConsent, captureRequest, captureOpening, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set()
+  let closing = false, settingsWindow, captureWindow, captureConsent, captureRequest, captureOpening, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set(), hostInfo = null, parentRemoval = null
   let preference = await store.read('preferences.json', { voice: false })
   const save = patch => { Object.assign(preference, patch); return store.write('preferences.json', preference) }
   const { ChatDraft } = await import('../src/drafts.mjs'); const drafts = new ChatDraft({ initial: preference.chatDraft, save })
@@ -89,6 +93,8 @@ async function start() {
   }
   ipcMain.handle('friend-settings', async (event, action, body = {}) => {
     if (!trusted(event, settingsWindow, 'settings.html')) throw Error('设置入口无效')
+    if (action === 'uninstall') return requestUninstall()
+    if (closing) throw Error('正在关闭或卸载，请等待完成')
     if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status(), memory: recall.status(), desktop: { version, capabilities } }
     if (action === 'choose') {
       if (!['role', 'memory'].includes(body.kind)) throw Error('请选择角色或记忆')
@@ -112,6 +118,7 @@ async function start() {
   })
   ipcMain.handle('friend-capture', async (event, action, body = {}) => {
     if (!trusted(event, captureWindow, 'capture.html')) throw Error('共享入口无效')
+    if (closing) throw Error('共享已停止')
     if (action === 'sources') return captureConsent.list(body.type)
     if (action === 'select') {
       if (!engine.ready()) throw Error('请先设置 API Key')
@@ -133,24 +140,57 @@ async function start() {
     }
     throw Error('未知共享操作')
   })
-  const close = async ({ reason } = {}) => {
-    if (closing) return
+  const quiesce = async () => {
     closing = true
-    try { await drafts.writes } catch { closing = false; notice('草稿尚未保存成功，窗口已保留，请先复制文字或重试。'); return }
+    try { await drafts.writes } catch { closing = false; throw Error('草稿尚未保存成功，窗口已保留，请先复制文字或重试。') }
     clearInterval(timer); globalShortcut.unregisterAll(); speech.setEnabled(false); mover.stop(); stopCapture()
     await engine.close()
     // Let the canceled request finish its local bookkeeping before exiting.
     const deadline = Date.now() + 2000
     while (engine.working && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))
-    await store.writes.catch(() => {}); if (captureWindow && !captureWindow.isDestroyed()) captureWindow.destroy()
+    if (engine.working) throw Error('当前请求尚未结束，资料已保留，未继续卸载。')
+    await store.writes; if (captureWindow && !captureWindow.isDestroyed()) captureWindow.destroy()
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy()
     await chat.destroy(); pet.destroy()
+  }
+  const close = async ({ reason } = {}) => {
+    if (closing) return
+    try { await quiesce() } catch (error) { closing = false; notice(error.message); return }
     if (reason && !hidden) await dialog.showMessageBox({ type: 'info', title: 'DSH Friend 已关闭', message: reason === 'host-disabled' ? '宿主已停用桌面陪伴插件。' : '收到系统停止请求，桌面陪伴已关闭。', detail: '共享已结束，本机聊天与已保存的草稿保留。', buttons: ['知道了'] })
     app.quit()
   }
+  const uninstallFlow = new UninstallFlow({
+    ask: async () => {
+      if (!hostInfo?.canUninstall || !process.connected) throw Error('请先退出独立启动的桌宠，再在 DSH 中用 /friend 打开，然后从设置卸载。未改动插件或资料。')
+      const buttons = ['取消', '卸载并保留资料', ...(dataOwner.owned ? ['卸载并删除资料'] : [])]
+      const result = await dialog.showMessageBox({ type: 'warning', title: '卸载 DSH Friend', message: '卸载前，要保留本机资料吗？', detail: '将从 DSH 配置「' + hostInfo.profile + '」移除 dsh-friend。\n资料目录：' + dataDir + '\n\n删除范围：聊天、插件日记与摘记、草稿、精选、API 设置及本插件缓存。导入的原始文件夹、源码项目和共用运行时保留。\n多个 DSH 配置共用此资料目录；删除资料会影响它们。' + (dataOwner.owned ? '' : '\n\n此目录归属不能确认，只允许保留资料：' + dataOwner.reason), buttons, defaultId: 0, cancelId: 0, noLink: true })
+      return result.response === 1 ? 'keep' : result.response === 2 && dataOwner.owned ? 'delete' : 'cancel'
+    },
+    quiesce,
+    stage: async choice => stageUninstall({ choice, plan: choice === 'delete' ? await makeCleanupPlan(dataDir, { owner: dataOwner, packageRoot: join(__dirname, '..') }) : null, silent: hidden && smoke && process.env.DSH_FRIEND_UNINSTALL_TEST === '1' }),
+    remove: () => new Promise(resolve => {
+      if (!process.connected) return resolve({ removed: false, code: 'host-disconnected' })
+      const requestId = randomUUID()
+      const timeout = setTimeout(() => { parentRemoval = null; resolve({ removed: false, code: 'unknown' }) }, 180000)
+      parentRemoval = { requestId, done: result => { clearTimeout(timeout); parentRemoval = null; resolve(result) } }
+      sendParent({ type: 'dsh-friend-uninstall-request', requestId, approved: true })
+    }),
+    cleanup: startCleanupWorker,
+    failed: async (code, removed = false) => {
+      await dialog.showMessageBox({ type: 'warning', title: 'DSH Friend 卸载未完成', message: removed ? '插件已移除，但资料尚未清理。' : '插件移除尚未确认，未启动资料清理。', detail: '本机资料目录：' + dataDir + '\n' + (code === 'stop-profile' ? '宿主要求先停止此配置，请停止后通过 DSH 插件管理器移除。' : '可能需要在 DSH 插件管理器中重试移除。') + '\n错误标识：' + code, buttons: ['知道了'] })
+      app.quit()
+    },
+    finish: () => app.quit(),
+  })
+  const requestUninstall = () => uninstallFlow.run().catch(async error => {
+    if (!closing) throw error
+    await dialog.showMessageBox({ type: 'warning', title: '未继续卸载', message: error.message, detail: '未启动资料清理。本机资料目录：' + dataDir, buttons: ['知道了'] }); app.quit()
+    return { removed: false }
+  })
   ipcMain.handle('friend-pet', async (event, action, body = {}) => {
     const petSender = trusted(event, pet, 'index.html'), chatSender = trusted(event, chat.window, 'chat.html')
     if (!petSender && !chatSender) throw Error('拒绝非桌宠入口')
+    if (closing) throw Error('桌宠正在关闭')
     if (!petSender && ['catalog', 'action-ack', 'interact', 'pointer', 'expand', 'drag-start', 'drag-end', 'menu', 'close'].includes(action)) throw Error('仅供桌宠身体使用')
     if (action === 'state') return state()
     if (action === 'catalog') return actions
@@ -219,9 +259,16 @@ async function start() {
   powerMonitor.on('unlock-screen', () => { suspended = false; engine.lastActivity = Date.now() })
   globalShortcut.register('CommandOrControl+Alt+F8', () => { try { engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture() } catch (err) { notice(err.message) } })
   process.on('message', message => {
+    if (message?.type === 'dsh-friend-host' && typeof message.profile === 'string') hostInfo = { profile: message.profile.slice(0, 200), canUninstall: message.canUninstall === true }
+    if (message?.type === 'dsh-friend-uninstall-result' && message.requestId === parentRemoval?.requestId) parentRemoval.done({ removed: message.removed === true, code: typeof message.code === 'string' ? message.code : 'host-error' })
+    if (message?.type === 'dsh-friend-uninstall-prompt' && /^[a-f0-9-]{36}$/.test(message.requestId)) {
+      sendParent({ type: 'dsh-friend-uninstall-prompted', requestId: message.requestId })
+      void requestUninstall().catch(error => dialog.showMessageBox({ type: 'info', title: '无法卸载', message: error.message, buttons: ['知道了'] }))
+    }
     if (message?.type === 'dsh-friend-stop') void close({ reason: message.reason || 'host-disabled' })
     if (message?.type === 'dsh-friend-show' && /^[a-f0-9-]{36}$/.test(message.requestId)) void showPet().then(() => sendParent({ type: 'dsh-friend-shown', requestId: message.requestId }), () => {})
   })
+  process.on('disconnect', () => parentRemoval?.done({ removed: false, code: 'host-disconnected' }))
   process.on('SIGTERM', () => { void close({ reason: 'system-signal' }) }); process.on('SIGINT', () => { void close({ reason: 'system-signal' }) })
   await pet.loadFile(join(__dirname, 'index.html')); await chat.load()
   if (!hidden) pet.showInactive()
@@ -230,6 +277,7 @@ async function start() {
   process.stdout.write('DSH_FRIEND_READY\n')
   sendParent({ type: 'dsh-friend-ready', version, capabilities })
   if (smoke) {
+    if (process.env.DSH_FRIEND_UNINSTALL_TEST === '1') { await require('../scripts/electron-uninstall-smoke.cjs').run({ pet, chat, settingsWindow, engine, getClosing: () => closing, getHost: () => hostInfo }); return }
     if (process.env.DSH_FRIEND_INTEGRATION === '1') await require('../scripts/electron-smoke.cjs').run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture: () => captureWindow })
     const report = { pet: await pet.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("pet"))'), chat: await chat.window.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("input"))'), settings: settingsWindow ? await settingsWindow.webContents.executeJavaScript('Boolean(window.settings && document.getElementById("apiKey"))') : true, actions: actions.length, isolated: pet.webContents.getLastWebPreferences().contextIsolation }
     if (process.env.DSH_FRIEND_EVIDENCE_DIR) {

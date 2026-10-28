@@ -74,6 +74,11 @@ $('form').onsubmit = async event => {
   } catch (err) { error(err) } finally { $('save').disabled = false }
 }
 $('folder').onclick = () => window.settings.folder().catch(error)
+$('uninstall').onclick = async () => {
+  $('uninstall').disabled = true
+  try { const result = await window.settings.uninstall(); if (result?.cancelled) $('status').textContent = '已取消卸载。' }
+  catch (err) { error(err) } finally { $('uninstall').disabled = false }
+}
 $('test').onclick = async () => {
   $('test').disabled = true; $('status').textContent = '正在测试已保存的聊天设置……'
   try { await window.settings.test(); $('status').textContent = '连接成功。回复已显示在桌宠聊天中。' } catch (err) { error(err) } finally { $('test').disabled = false }

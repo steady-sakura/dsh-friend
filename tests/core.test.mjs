@@ -145,6 +145,7 @@ test('layout keeps chat and dragged pet within display bounds', () => {
   assert(Number.isFinite(position.x) && position.y < 1080)
 })
 test('DSH plugin registers /friend command using Cordis effects', () => {
-  const effects = [], registered = []; apply({ effect: fn => effects.push(fn), commands: { register: command => { registered.push(command); return () => {} } } }); effects[0]()
-  assert.equal(name, 'dsh-friend'); assert.deepEqual(inject, ['commands']); assert.equal(registered[0].name, 'friend'); assert.equal(registered[0].recordInput, false)
+  const effects = [], registered = []; apply({ effect: fn => effects.push(fn), pluginManager: {}, profileContext: { name: 'test' }, commands: { register: command => { registered.push(command); return () => {} } } }); effects[0](); effects[1]()
+  assert.equal(name, 'dsh-friend'); assert.deepEqual(inject, ['commands', 'pluginManager', 'profileContext']); assert.equal(registered[0].name, 'friend'); assert.equal(registered[0].recordInput, false)
+  assert.equal(registered[1].name, 'friend-uninstall'); assert.equal(registered[1].recordInput, false)
 })
