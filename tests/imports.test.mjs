@@ -3,11 +3,18 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { readFolder, Imports } from '../src/imports.mjs'
+import { readFolder, Imports, isSensitiveImportPath } from '../src/imports.mjs'
 import { systemPrompt } from '../src/api.mjs'
 import { Store } from '../src/store.mjs'
 import { defaults } from '../src/config.mjs'
 
+test('macOS system temporary paths are allowed without unblocking user private folders', () => {
+  assert.equal(isSensitiveImportPath('/private/var/folders/example/T/role', 'darwin'), false)
+  assert.equal(isSensitiveImportPath('/private/tmp/role', 'darwin'), false)
+  for (const path of ['/Users/example/private/role', '/private/var/folders/example/T/private', '/private/tmp/auth', '/private/etc', '/private/var/secrets']) assert.equal(isSensitiveImportPath(path, 'darwin'), true, path)
+  assert.equal(isSensitiveImportPath('/private/var/role', 'linux'), true)
+  assert.equal(isSensitiveImportPath('D:\\private\\role', 'win32'), true)
+})
 test('folder imports only explicit top-level markdown/text and skips suspected credentials', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'dsh-friend-role-'))
   await writeFile(join(folder, 'role.md'), '喜欢看云。'); await writeFile(join(folder, 'memory.txt'), '称呼她为朋友。')

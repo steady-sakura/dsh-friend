@@ -1,16 +1,25 @@
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises'
-import { join, resolve, basename } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const forbidden = /^(?:private|state|auth|credentials?|secrets?|node_modules|\.git|\.ssh|\.aws)$/i
 const sensitive = /(?:^\.|cookie|credential|secret|token|password|api[-_]?key|账户|密码|密钥|凭据)/i
+export function isSensitiveImportPath(path, platform = process.platform) {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts.some((part, index) => {
+    // macOS resolves /var and /tmp through the system's /private container.
+    // Only that root component is exempt; a user's nested private directory stays blocked.
+    const systemContainer = platform === 'darwin' && index === 0 && part === 'private' && ['var', 'tmp'].includes(parts[1])
+    return forbidden.test(part) && !systemContainer
+  })
+}
 export async function readFolder(folder, { maxChars = 24000, maxFiles = 30, maxBytes = 128 * 1024 } = {}) {
   if (!folder) return { text: '', files: [], chars: 0, truncated: false }
   const absolute = resolve(folder)
-  if (absolute.split(/[\\/]/).some(part => forbidden.test(part))) throw Error('此文件夹可能含私密资料，请选择专门放角色或记忆的文件夹')
+  if (isSensitiveImportPath(absolute)) throw Error('此文件夹可能含私密资料，请选择专门放角色或记忆的文件夹')
   const stat = await lstat(absolute)
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw Error('请选择普通文件夹，不读取链接目录')
   const canonical = await realpath(absolute)
-  if (canonical.split(/[\\/]/).some(part => forbidden.test(part))) throw Error('链接目标位于私密资料目录，未读取')
+  if (isSensitiveImportPath(canonical)) throw Error('链接目标位于私密资料目录，未读取')
   const entries = (await readdir(canonical, { withFileTypes: true })).filter(entry => entry.isFile() && /\.(?:md|txt)$/i.test(entry.name) && !sensitive.test(entry.name)).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   const files = []; let text = '', truncated = entries.length > maxFiles
   for (const entry of entries.slice(0, maxFiles)) {

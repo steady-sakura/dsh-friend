@@ -1,6 +1,6 @@
 {
   "name": "dsh-friend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 桌面陪伴：dsh-pet 动画、独立 API 聊天与经过授权的屏幕观察",
   "type": "module",
   "main": "src/plugin.mjs",
