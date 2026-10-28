@@ -12,7 +12,7 @@ for (const action of actions) {
   const bytes = await readFile(join(root, 'assets/desktop-pet', action.file))
   if (createHash('sha256').update(bytes).digest('hex') !== action.sha256) throw Error('Asset checksum mismatch: ' + action.file)
 }
-const privateNames = /^(?:state|memory|conversations|logs|credentials|\.env)(?:$|\.)/i
+const privateNames = /^(?:state|memory|chats|sessions|keeps|conversations|logs|credentials|input-receipts-ready|\.env)(?:$|\.)/i
 async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (['.git', 'node_modules', '.local', 'evidence', 'test-results'].includes(entry.name) || entry.name.endsWith('.tgz')) continue

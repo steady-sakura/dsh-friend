@@ -9,6 +9,7 @@ function render(value) {
   $('visionApiKey').placeholder = value.hasVisionApiKey ? '已设置；留空保留' : '独立 API 的 Key'
   $('key-status').textContent = value.encryptedStorage ? '密钥使用操作系统加密保存在本机。' : '系统加密不可用：密钥仅用于本次运行，下次需要重新填写。'
   $('data-dir').textContent = value.dataDir
+  if (value.desktop) $('runtime-version').textContent = '当前运行版本 ' + value.desktop.version + ' · 草稿 / 历史 / 采集协议已加载'
   renderImports(value.imports)
   renderMemory(value.memory); consentLabel()
 }

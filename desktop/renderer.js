@@ -1,6 +1,7 @@
+import { FriendPetPhysics } from './dsh-physics.js'
 const $ = id => document.getElementById(id)
 const call = (action, body) => window.friend.call(action, body)
-let snapshot = null, polling = false, seen = new Set(), hydrated = false, ignore = false
+let snapshot = null, polling = false, seen = new Set(), seenGroups = new Set(), hydrated = false, ignore = false
 let interactionUntil = 0, clickTimer = null, dragging = false
 let actionCatalog = new Map(), seenCommand = null, playingCommand = null, actionTimer = null, generation = 0
 let ackQueue = Promise.resolve()
@@ -42,7 +43,8 @@ function render(value) {
   snapshot = value
   const { chat } = value, command = value.pet?.command
   if (command?.status === 'queued' && command.id !== seenCommand && Date.now() <= command.expiresAt) { seenCommand = command.id; react(command.action, command.id) }
-  const newReply = hydrated && chat.history.some(row => row.role === 'assistant' && !seen.has(row.id))
+  const newReply = hydrated && chat.history.some(row => row.role === 'assistant' && !seen.has(row.id) && !seenGroups.has(row.replyGroup || row.id))
+  seenGroups = new Set(chat.history.filter(row => row.role === 'assistant').map(row => row.replyGroup || row.id))
   seen = new Set(chat.history.map(row => row.id)); hydrated = true
   if (newReply) react('talk', null, true)
   $('status').textContent = chat.opened && chat.ready ? '桌面聊天已连接。' : '桌面聊天尚未连接。'

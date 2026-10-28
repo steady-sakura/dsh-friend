@@ -6,22 +6,31 @@ const { createChatWindow } = require('./chat-window.cjs')
 const { actions } = require('./actions.cjs')
 const { LocalSpeech } = require('./speech.cjs')
 const { CaptureConsent, capturePermission } = require('./consent.cjs')
+const { randomUUID } = require('node:crypto')
 
 async function start() {
   const hidden = process.argv.includes('--hidden'), smoke = process.argv.includes('--smoke')
   app.setName('dsh-friend')
+  const sendParent = message => { if (process.connected) { try { process.send(message, () => {}) } catch {} } }
+  const version = require('../package.json').version
+  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1 }
   // Personal state never lives in the installed plugin or working repository.
   const dataDir = process.env.DSH_FRIEND_DATA_DIR || join(app.getPath('appData'), 'dsh-friend')
   app.setPath('userData', dataDir)
-  if (!app.requestSingleInstanceLock()) { app.quit(); return }
+  if (!app.requestSingleInstanceLock()) {
+    if (process.connected) { try { process.send({ type: 'dsh-friend-forwarded' }, () => app.quit()) } catch { app.quit() } } else app.quit()
+    return
+  }
   await app.whenReady()
   const [{ Store }, { Vault }, { API }, { Companion }] = await Promise.all([import('../src/store.mjs'), import('../src/config.mjs'), import('../src/api.mjs'), import('../src/companion.mjs')])
   const store = new Store(dataDir); await store.init()
   const vault = new Vault(store, safeStorage); await vault.init()
   const api = new API()
-  let closing = false, settingsWindow, captureWindow, captureConsent, selection, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set()
+  let closing = false, settingsWindow, captureWindow, captureConsent, captureRequest, captureOpening, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set()
   let preference = await store.read('preferences.json', { voice: false })
   const save = patch => { Object.assign(preference, patch); return store.write('preferences.json', preference) }
+  const { ChatDraft } = await import('../src/drafts.mjs'); const drafts = new ChatDraft({ initial: preference.chatDraft, save })
+  const { ChatArchive } = await import('../src/chat-archive.mjs'); const archive = new ChatArchive(store)
   const { Imports } = await import('../src/imports.mjs'); const imports = new Imports(store); await imports.init()
   const { Recall } = await import('../src/recall.mjs'); const recall = new Recall({ store, imports }); await recall.init()
   const engine = new Companion({ store, vault, api, catalog: actions, imports, recall }); await engine.init()
@@ -39,7 +48,7 @@ async function start() {
   const chat = createChatWindow({ BrowserWindow, pet, screen, preload: join(__dirname, 'preload.cjs'), preference, save, hidden }); protect(chat.window)
   const emit = (action, extra = {}) => { for (const window of [pet, chat.window]) if (!window.isDestroyed()) window.webContents.send('friend-pet-action', { action, ...extra }) }
   const notice = message => emit('notice', { message })
-  const mover = new PetMovement({ window: pet, screen, save: position => void save({ position }).catch(() => {}), bounce: amount => emit('squash', { amount }) })
+  const mover = new PetMovement({ window: pet, screen, save: position => void save({ position }).catch(() => {}), bounce: amount => emit('squash', { amount }), report: () => notice('这次拖甩已停止，位置保留，可以重新拖动。') })
   if (Number.isFinite(preference.position?.x) && Number.isFinite(preference.position?.y)) mover.move(preference.position)
   const speech = new LocalSpeech({ report: message => { speechIssue = message } }); speech.setEnabled(preference.voice === true)
   const state = () => {
@@ -48,17 +57,21 @@ async function start() {
       speech.speak(row.text); if (chat.view === 'hidden') void chat.show('bubble').catch(() => {})
     }
     seen = new Set(value.chat.history.map(row => row.id)); hydrated = true
-    return { ...value, voice: preference.voice === true, voiceProblem: speechIssue, chatView: chat.view, bubbleExpanded: chat.expanded }
+    return { ...value, desktop: { version, capabilities }, voice: preference.voice === true, voiceProblem: speechIssue, chatView: chat.view, bubbleExpanded: chat.expanded }
   }
   const openSettings = async () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return }
     settingsWindow = new BrowserWindow({ width: 670, height: 820, minWidth: 550, minHeight: 600, show: false, title: 'DSH Friend · API 与偏好', backgroundColor: '#f4f9fc', webPreferences: web('settings-preload.cjs') })
     protect(settingsWindow); await settingsWindow.loadFile(join(__dirname, 'settings.html')); if (!hidden) settingsWindow.show()
   }
-  const stopCapture = () => { engine.stopCapture(); captureConsent?.clear(); selection = null }
-  const openCapture = async () => {
+  const stopCapture = () => { engine.stopCapture(); captureConsent?.clear(); captureRequest = null }
+  const openCapture = () => {
+    if (captureOpening) return captureOpening
+    captureOpening = openCaptureNow().finally(() => { captureOpening = null }); return captureOpening
+  }
+  const openCaptureNow = async () => {
     if (!engine.config.visionEnabled) { await openSettings(); throw Error('请在设置里启用支持图片输入的模型，再选择共享来源。') }
-    if (captureWindow && !captureWindow.isDestroyed()) { captureWindow.show(); captureWindow.focus(); return }
+    if (captureWindow && !captureWindow.isDestroyed()) { if (captureWindow.isMinimized()) captureWindow.restore(); if (!hidden) { captureWindow.show(); captureWindow.focus() }; return }
     const own = session.fromPartition('friend-capture')
     captureWindow = new BrowserWindow({ width: 720, height: 800, minWidth: 560, minHeight: 600, show: false, title: 'DSH Friend · 共享应用 / 屏幕', backgroundColor: '#f4f9fc', webPreferences: { ...web('capture-preload.cjs'), session: own } })
     const owned = captureWindow
@@ -66,13 +79,17 @@ async function start() {
     captureConsent = new CaptureConsent({ getSources: async options => (await desktopCapturer.getSources(options)).filter(row => ![pet, chat.window, owned, settingsWindow].some(w => w && !w.isDestroyed() && w.getMediaSourceId() === row.id)), trusted: frame => !owned.isDestroyed() && frame === owned.webContents.mainFrame && frame.url === pathToFileURL(join(__dirname, 'capture.html')).href })
     own.setPermissionRequestHandler((contents, permission, callback, details) => callback(contents === owned.webContents && capturePermission(permission, details) && captureConsent.permitted(contents.mainFrame)))
     own.setPermissionCheckHandler((contents, permission) => contents === owned.webContents && permission === 'display-capture' && captureConsent.permitted(contents.mainFrame))
-    own.setDisplayMediaRequestHandler((request, callback) => { void captureConsent.grant(request, callback) })
-    owned.on('closed', () => { stopCapture(); captureWindow = null })
-    await owned.loadFile(join(__dirname, 'capture.html')); if (!hidden) owned.show()
+    own.setDisplayMediaRequestHandler((request, callback) => {
+      const selected = captureRequest
+      void captureConsent.grant(request, value => { if (value && selected && captureRequest === selected) { selected.granted = true; callback(value) } else callback(null) })
+    })
+    owned.on('closed', () => { if (captureWindow === owned) { stopCapture(); captureWindow = null } })
+    owned.setTitle('DSH Friend · 正在打开来源选择…'); if (!hidden) { owned.show(); owned.focus() }
+    await owned.loadFile(join(__dirname, 'capture.html')); owned.setTitle('DSH Friend · 共享应用 / 屏幕'); if (!hidden) { owned.show(); owned.focus() }
   }
   ipcMain.handle('friend-settings', async (event, action, body = {}) => {
     if (!trusted(event, settingsWindow, 'settings.html')) throw Error('设置入口无效')
-    if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status(), memory: recall.status() }
+    if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status(), memory: recall.status(), desktop: { version, capabilities } }
     if (action === 'choose') {
       if (!['role', 'memory'].includes(body.kind)) throw Error('请选择角色或记忆')
       const result = await dialog.showOpenDialog(settingsWindow, { title: body.kind === 'role' ? '选择角色提示词文件夹' : '选择记忆文件夹', properties: ['openDirectory'] })
@@ -98,27 +115,38 @@ async function start() {
     if (action === 'sources') return captureConsent.list(body.type)
     if (action === 'select') {
       if (!engine.ready()) throw Error('请先设置 API Key')
-      captureConsent.select(body); selection = { id: body.id, ...captureConsent.selection }; return { name: selection.name }
+      if (!/^[a-f0-9-]{36}$/.test(body.requestId)) throw Error('共享开启编号无效')
+      captureConsent.select(body); captureRequest = { ...captureConsent.selection, requestId: body.requestId, granted: false }; return { name: captureRequest.name }
     }
     if (action === 'started') {
-      if (!selection) throw Error('尚未选择来源')
-      const result = engine.startCapture(selection.name); selection = null; return result
+      if (!captureRequest || captureRequest.requestId !== body.requestId || !captureRequest.granted) throw Error('共享授权已撤回或取流尚未确认')
+      const selected = captureRequest; captureRequest = null
+      return engine.startCapture(selected.name, { sessionId: selected.requestId })
     }
-    if (action === 'state') return { ...engine.capture, interval: engine.config.observeSeconds, nextFrameAt: (engine.lastFrame || 0) + engine.config.observeSeconds * 1000, busy: engine.working || engine.pending.length > 0, error: engine.error }
-    if (action === 'frame') return engine.frame(body)
-    if (action === 'stop') { stopCapture(); return {} }
+    if (action === 'state') return { ...engine.state().capture, interval: engine.config.observeSeconds, nextFrameAt: (engine.lastFrame || 0) + engine.config.observeSeconds * 1000, busy: engine.working || engine.pending.length > 0, error: engine.error }
+    if (action === 'sample') return engine.sample(body)
+    if (action === 'observe') return engine.observe(body)
+    if (action === 'stop') {
+      if (body.requestId && captureRequest?.requestId === body.requestId) { captureConsent.clear(); captureRequest = null }
+      if (engine.capture.sessionId && [body.sessionId, body.requestId].includes(engine.capture.sessionId)) engine.stopCapture({ sessionId: engine.capture.sessionId })
+      return {}
+    }
     throw Error('未知共享操作')
   })
-  const close = async () => {
+  const close = async ({ reason } = {}) => {
     if (closing) return
-    closing = true; clearInterval(timer); globalShortcut.unregisterAll(); speech.setEnabled(false); mover.stop(); stopCapture()
+    closing = true
+    try { await drafts.writes } catch { closing = false; notice('草稿尚未保存成功，窗口已保留，请先复制文字或重试。'); return }
+    clearInterval(timer); globalShortcut.unregisterAll(); speech.setEnabled(false); mover.stop(); stopCapture()
     await engine.close()
     // Let the canceled request finish its local bookkeeping before exiting.
     const deadline = Date.now() + 2000
     while (engine.working && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))
     await store.writes.catch(() => {}); if (captureWindow && !captureWindow.isDestroyed()) captureWindow.destroy()
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy()
-    await chat.destroy(); pet.destroy(); app.quit()
+    await chat.destroy(); pet.destroy()
+    if (reason && !hidden) await dialog.showMessageBox({ type: 'info', title: 'DSH Friend 已关闭', message: reason === 'host-disabled' ? '宿主已停用桌面陪伴插件。' : '收到系统停止请求，桌面陪伴已关闭。', detail: '共享已结束，本机聊天与已保存的草稿保留。', buttons: ['知道了'] })
+    app.quit()
   }
   ipcMain.handle('friend-pet', async (event, action, body = {}) => {
     const petSender = trusted(event, pet, 'index.html'), chatSender = trusted(event, chat.window, 'chat.html')
@@ -126,8 +154,19 @@ async function start() {
     if (!petSender && ['catalog', 'action-ack', 'interact', 'pointer', 'expand', 'drag-start', 'drag-end', 'menu', 'close'].includes(action)) throw Error('仅供桌宠身体使用')
     if (action === 'state') return state()
     if (action === 'catalog') return actions
+    if (['draft', 'sessions', 'history', 'keep-frame', 'look-frame'].includes(action) && !chatSender) throw Error('此操作仅供聊天窗口使用')
+    if (action === 'draft') return body.text === undefined ? drafts.read() : drafts.write(body)
+    if (action === 'sessions') return archive.list(body)
+    if (action === 'history') return archive.page(body)
+    if (action === 'keep-frame') return engine.frames.keep(body)
+    if (action === 'look-frame') { const frame = engine.frames.info(engine.frames.frames.at(-1)); if (!frame) throw Error('没有可用的新采样，未换用其他画面'); return engine.observe({ ...frame, force: true }) }
     if (action === 'action-ack') { engine.ack(body.id, body.status); return {} }
-    if (action === 'input') { await engine.input(body); return state() }
+    if (action === 'input') {
+      const admission = await engine.input(body)
+      if (admission?.duplicate) notice('这条消息已保存，未重复调用 API；可到历史记录查看。')
+      try { await drafts.clearMatching(body) } catch { notice('消息已保存，但草稿清理失败；不会自动重发。') }
+      return state()
+    }
     if (action === 'interact') { void engine.interact(body.kind).catch(err => notice(err.message)); return {} }
     if (action === 'chat-view') return chat.show(body.mode, true, { expanded: body.expanded === true })
     if (action === 'bubble-fit' && chatSender) return chat.fit(body.height)
@@ -141,7 +180,11 @@ async function start() {
       return result
     }
     if (action === 'settings') return openSettings()
-    if (action === 'share') return openCapture()
+    if (action === 'share') {
+      emit('picker-status', { phase: 'opening', message: '正在打开应用选择窗口…' })
+      try { await openCapture(); emit('picker-status', { phase: 'opened', message: '选择窗口已打开，原有来源与页面保留。' }); return {} }
+      catch (err) { emit('picker-status', { phase: 'failed', message: err.message }); throw err }
+    }
     if (action === 'pause') { engine.pauseCapture(); return {} }
     if (action === 'resume') { engine.resumeCapture(); return {} }
     if (action === 'stop') { stopCapture(); return {} }
@@ -159,6 +202,7 @@ async function start() {
         { label: '结束共享', click: stopCapture },
         { label: '回到右下角', click: () => mover.reset() },
         { label: '打开本机聊天记录', click: safe(() => shell.openPath(join(dataDir, 'chats'))) },
+        { label: '打开精选画面', click: safe(async () => { await require('node:fs/promises').mkdir(join(dataDir, 'keeps'), { recursive: true }); await shell.openPath(join(dataDir, 'keeps')) }) },
         { type: 'separator' }, { label: '退出桌面陪伴', click: safe(close) },
       ]).popup({ window: pet }); return {}
     }
@@ -166,19 +210,25 @@ async function start() {
   })
   pet.on('close', event => { if (!closing) { event.preventDefault(); void close() } })
   app.on('before-quit', event => { if (!closing) { event.preventDefault(); void close() } })
-  app.on('second-instance', () => { if (!hidden) pet.show(); void chat.show('bubble', true, { expanded: true }).catch(() => {}) })
+  const showPet = async () => { if (pet.isDestroyed()) throw Error('桌宠正在关闭'); if (pet.isMinimized()) pet.restore(); if (!hidden) { pet.show(); pet.focus() }; await chat.show('bubble', true, { expanded: true }) }
+  app.on('second-instance', () => { void showPet().catch(err => notice(err.message)) })
+  app.on('window-all-closed', () => {})
   const suspend = () => { suspended = true; engine.pauseCapture(); engine.cancel(); speech.stop() }
   powerMonitor.on('suspend', suspend); powerMonitor.on('lock-screen', suspend)
   powerMonitor.on('resume', () => { suspended = false; engine.lastActivity = Date.now() })
   powerMonitor.on('unlock-screen', () => { suspended = false; engine.lastActivity = Date.now() })
   globalShortcut.register('CommandOrControl+Alt+F8', () => { try { engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture() } catch (err) { notice(err.message) } })
-  process.on('message', message => { if (message?.type === 'dsh-friend-stop') void close() })
-  process.on('SIGTERM', () => { void close() }); process.on('SIGINT', () => { void close() })
+  process.on('message', message => {
+    if (message?.type === 'dsh-friend-stop') void close({ reason: message.reason || 'host-disabled' })
+    if (message?.type === 'dsh-friend-show' && /^[a-f0-9-]{36}$/.test(message.requestId)) void showPet().then(() => sendParent({ type: 'dsh-friend-shown', requestId: message.requestId }), () => {})
+  })
+  process.on('SIGTERM', () => { void close({ reason: 'system-signal' }) }); process.on('SIGINT', () => { void close({ reason: 'system-signal' }) })
   await pet.loadFile(join(__dirname, 'index.html')); await chat.load()
   if (!hidden) pet.showInactive()
   if (!engine.ready()) await openSettings()
   timer = setInterval(() => { if (!suspended) void engine.tick().catch(err => { engine.error = err.message }) }, 1000)
   process.stdout.write('DSH_FRIEND_READY\n')
+  sendParent({ type: 'dsh-friend-ready', version, capabilities })
   if (smoke) {
     if (process.env.DSH_FRIEND_INTEGRATION === '1') await require('../scripts/electron-smoke.cjs').run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture: () => captureWindow })
     const report = { pet: await pet.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("pet"))'), chat: await chat.window.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("input"))'), settings: settingsWindow ? await settingsWindow.webContents.executeJavaScript('Boolean(window.settings && document.getElementById("apiKey"))') : true, actions: actions.length, isolated: pet.webContents.getLastWebPreferences().contextIsolation }

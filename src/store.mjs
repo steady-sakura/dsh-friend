@@ -1,10 +1,31 @@
-import { mkdir, readFile, writeFile, rename, appendFile, readdir } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rename, readdir, lstat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { appendRecord } from './chat-archive.mjs'
 
 export class Store {
-  constructor(dir) { this.dir = dir; this.writes = Promise.resolve() }
-  async init() { await mkdir(join(this.dir, 'chats'), { recursive: true, mode: 0o700 }) }
+  constructor(dir) { this.dir = dir; this.writes = Promise.resolve(); this.admitted = new Set() }
+  async init() {
+    await mkdir(join(this.dir, 'chats'), { recursive: true, mode: 0o700 }); await mkdir(join(this.dir, 'sessions'), { recursive: true, mode: 0o700 })
+    const scan = async (path, visit) => {
+      const stream = createReadStream(path, { encoding: 'utf8' }), reader = createInterface({ input: stream, crlfDelay: Infinity })
+      try { for await (const line of reader) { try { visit(JSON.parse(line)) } catch {} } } catch (error) { if (error.code !== 'ENOENT') throw error } finally { reader.close(); stream.destroy() }
+    }
+    await scan(join(this.dir, 'input-receipts.jsonl'), row => { for (const id of row.ids || [row.id]) if (/^[a-f0-9-]{36}$/.test(id)) this.admitted.add(id) })
+    if (!(await this.read('input-receipts-ready.json', false))) {
+      for (const name of (await readdir(join(this.dir, 'chats'))).filter(n => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n))) {
+        const path = join(this.dir, 'chats', name), info = await lstat(path)
+        if (!info.isFile() || info.isSymbolicLink()) continue
+        await scan(path, row => { if (row.role === 'user' && /^[a-f0-9-]{36}$/.test(row.id)) this.admitted.add(row.id) })
+      }
+      const ids = [...this.admitted]
+      for (let at = 0; at < ids.length; at += 1000) await appendRecord(join(this.dir, 'input-receipts.jsonl'), { ids: ids.slice(at, at + 1000) })
+      await this.write('input-receipts-ready.json', true)
+    }
+  }
+  hasInput(id) { return this.admitted.has(id) }
   async read(name, fallback) {
     try { return JSON.parse(await readFile(join(this.dir, name), 'utf8')) }
     catch (err) { if (err.code === 'ENOENT') return fallback; throw Error('本机数据无法读取，请先备份数据目录再检查：' + name) }
@@ -17,10 +38,16 @@ export class Store {
     })
   }
   enqueue(fn) { const job = this.writes.catch(() => {}).then(fn); this.writes = job; return job }
-  append(row) {
+  append(row, { archive = true } = {}) {
     // en-CA may format differently in small-ICU Node builds; construct a stable local date.
     const now = new Date(), name = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-')
-    return this.enqueue(() => appendFile(join(this.dir, 'chats', name + '.jsonl'), JSON.stringify(row) + '\n', { mode: 0o600 }))
+    return this.enqueue(async () => {
+      await appendRecord(join(this.dir, 'chats', name + '.jsonl'), row)
+      if (archive && row.role === 'user' && /^[a-f0-9-]{36}$/.test(row.id) && !this.admitted.has(row.id)) {
+        await appendRecord(join(this.dir, 'input-receipts.jsonl'), { id: row.id }); this.admitted.add(row.id)
+      }
+      if (archive && /^[a-f0-9-]{36}$/.test(row.sessionId)) await appendRecord(join(this.dir, 'sessions', row.sessionId + '.jsonl'), row)
+    })
   }
   async history(limit = 120) {
     const names = (await readdir(join(this.dir, 'chats'))).filter(n => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort().reverse()

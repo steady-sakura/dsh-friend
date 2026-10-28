@@ -13,4 +13,7 @@ preferences.json
 imports.json
 memory/
 chats/
+sessions/
+keeps/
+input-receipts-ready.json
 evidence/

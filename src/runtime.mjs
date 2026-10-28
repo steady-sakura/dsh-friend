@@ -22,8 +22,10 @@ export async function ensureElectron() {
   const path = electronPath(); if (!path) throw Error('Electron 安装后仍不可用')
   return path
 }
-export async function launch({ ensure = true, extraArgs = [], stdio = 'inherit' } = {}) {
+export async function launch({ ensure = true, extraArgs = [], stdio = 'inherit', signal } = {}) {
+  if (signal?.aborted) throw Error('启动请求已取消')
   const executable = ensure ? await ensureElectron() : electronPath()
+  if (signal?.aborted) throw Error('启动请求已取消')
   if (!executable) throw Error('没有找到 Electron，请运行 npx dsh-friend 安装运行时')
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE
   return spawn(executable, [join(root, 'desktop/main.cjs'), ...extraArgs], { env, cwd: root, stdio, windowsHide: true })

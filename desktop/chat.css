@@ -23,3 +23,4 @@
 .bubble-mode.bubble-expanded #last-message{display:none}
 .bubble-mode.bubble-expanded #latest:not([hidden]){display:block!important}
 .bubble-mode.bubble-expanded form{display:flex}
+.history-tools{display:flex;flex-wrap:wrap;gap:5px;flex-shrink:0}.history-tools button,#sessions-more{font-size:11px}#session-browser{max-height:130px;overflow:auto;flex-shrink:0}#session-list{display:flex;flex-direction:column;gap:4px}#session-list button{text-align:left}#history-label{margin:0;font-size:11px;color:#658391}.bubble-mode:not(.bubble-expanded) .history-tools,.bubble-mode:not(.bubble-expanded) #session-browser,.bubble-mode:not(.bubble-expanded) #history-label{display:none!important}#keep-note{width:100%;border:1px solid #b9dce9;border-radius:7px;padding:5px;margin:4px 0;color:#193e55}details{font-size:11px;margin-top:6px}

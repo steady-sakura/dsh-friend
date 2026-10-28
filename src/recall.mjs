@@ -180,14 +180,14 @@ export class Recall {
     }
     return blocks.join('\n')
   }
-  async record({ turnId, kind, user, reply, memory = {}, refs = new Map() }) {
-    const job = this.jobs.catch(() => {}).then(() => this.recordNow({ turnId, kind, user, reply, memory, refs })); this.jobs = job; return job
+  async record({ turnId, kind, user, reply, replies, memory = {}, refs = new Map() }) {
+    const job = this.jobs.catch(() => {}).then(() => this.recordNow({ turnId, kind, user, reply, replies, memory, refs })); this.jobs = job; return job
   }
-  async recordNow({ turnId, kind, user, reply, memory, refs }) {
+  async recordNow({ turnId, kind, user, reply, replies, memory, refs }) {
     const now = this.now(), day = localDay(now), writes = [], blocks = [], priorFacts = this.facts.map(entry => ({ ...entry }))
     const reference = source => ({ id: source.id, name: source.name, type: source.type, sha256: source.sha256 || hash(source.text), role: source.role, at: source.at })
     const quote = text => !safeText(text) ? '> [疑似凭据内容未写入日记]' : text.slice(0, 1200).split('\n').map(line => '> ' + line).join('\n') + (text.length > 1200 ? '\n> [原文节选，完整内容可检索聊天来源]' : '')
-    if (kind === 'user' && user) blocks.push('### 对话原文摘录（机械记录）\n\n用户｜chat:' + user.id + '\n' + quote(user.text) + (reply ? '\n\n伙伴｜chat:' + reply.id + '\n' + quote(reply.text) : ''))
+    if (kind === 'user' && user) blocks.push('### 对话原文摘录（机械记录）\n\n用户｜chat:' + user.id + '\n' + quote(user.text) + (replies || (reply ? [reply] : [])).map(row => '\n\n伙伴｜chat:' + row.id + '\n' + quote(row.text)).join(''))
     if (reply) refs.set('reply', { id: 'chat:' + reply.id, name: '当前模型回复', type: 'chat', role: 'assistant', text: reply.text, visibleText: reply.text, sha256: hash(reply.text) })
     for (const note of (memory.remember || []).slice(0, 3)) {
       const source = refs.get(note.source), text = note.text?.trim()

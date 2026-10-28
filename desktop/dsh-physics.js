@@ -1,6 +1,6 @@
 // Pure-function subset from dsh-pet 0.3.6 src/shared/physics.ts; MIT (PC2005-cloud).
 // License: ../assets/desktop-pet/LICENSE-dsh-pet.md
-const FriendPetPhysics = (() => {
+export const FriendPetPhysics = (() => {
 const SPRING_K = 200;
 const SPRING_C = 30;
 const TRAIL_KEEP_MS = 200;
