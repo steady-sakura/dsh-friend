@@ -1,0 +1,14 @@
+node_modules/
+*.tgz
+coverage/
+.local/
+test-results/
+.env
+.env.*
+*.log
+*.jsonl
+credentials*
+settings.json
+preferences.json
+imports.json
+evidence/

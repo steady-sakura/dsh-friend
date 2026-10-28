@@ -1,0 +1,25 @@
+:root{font-family:"Microsoft YaHei",sans-serif;color:#193e55;font-size:13px;color-scheme:light}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f6fcff}button,input,textarea{-webkit-app-region:no-drag;font:inherit}button{cursor:pointer;border:1px solid #b9dce9;border-radius:8px;background:#f5fcff;color:#23546c;padding:5px 9px}button:hover{background:#dff4ff}button:disabled{opacity:.5;cursor:default}.card{height:100%;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid #b4d9ea;border-radius:12px}header{display:flex;align-items:center;gap:5px;flex-shrink:0}header span{flex:1;min-width:0;font-weight:bold;padding:4px 2px;user-select:none}.drag{-webkit-app-region:drag;cursor:move}header small{font-weight:normal;color:#617e8c;font-size:11px}.tools{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0}.settings label{font-size:12px}#status{margin:0;font-size:11px;line-height:1.4;color:#516d7c;flex-shrink:0}.bubble-mode #status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bubble-mode .panel-only{display:none}#history{flex:1;min-height:20px;overflow:auto;user-select:text;overscroll-behavior:contain;scrollbar-gutter:stable}.row{white-space:pre-wrap;overflow-wrap:anywhere;padding:7px 9px;margin:5px 0;border-radius:10px;background:#dff1f8;line-height:1.6}.row.user{background:#e6e8f6;margin-left:20px}.row small{display:block;font-size:11px;color:#5e6c80;margin-top:3px}.empty{font-size:12px;line-height:1.7;color:#718792;padding:8px}.empty[hidden],[hidden]{display:none!important}form{display:flex;gap:5px;margin:0;flex-shrink:0}textarea{resize:none;flex:1;min-width:0;min-height:48px;max-height:100px;border:1px solid #b9dce9;border-radius:8px;padding:6px;background:white;color:#193e55}footer{font-size:10px;color:#607c8b;flex-shrink:0}#latest{align-self:center;padding:3px 8px;font-size:11px;flex-shrink:0}.panel-mode .card{padding:12px;gap:8px}.panel-mode #status{max-height:62px;overflow:auto}
+.row.interaction{background:transparent;border-left:2px solid #c4dce6;border-radius:0;color:#647e8d;font-size:11px;padding:4px 8px;margin:5px 8px}
+.bubble-only{display:none}
+.bubble-mode .card{padding:10px 13px;border-radius:19px 19px 5px 19px;gap:7px;background:#f6fcff}
+.bubble-mode header{gap:5px;min-height:23px}
+.bubble-mode header span.drag{min-height:23px}
+.bubble-mode header button{padding:2px 6px;font-size:11px}
+.bubble-mode #switch-view{border-color:transparent;background:transparent;color:#64899d}
+.bubble-mode #switch-view:hover{background:#e4f3fa}
+.bubble-mode #history,.bubble-mode #latest,.bubble-mode #status{display:none!important}
+.bubble-mode.connection-problem #status{display:block!important;white-space:nowrap;max-height:16px;overflow:hidden;text-overflow:ellipsis}
+.bubble-mode #last-message{display:block;flex:1;min-height:24px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;margin:0;user-select:text}
+.bubble-mode form{padding-top:5px;border-top:1px solid #dcecf3}
+.bubble-mode textarea{min-height:36px;height:36px;font-size:12px}
+.bubble-mode #send{font-size:12px;padding:4px 8px}
+.panel-mode .bubble-only{display:none}
+#message-measure{position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font:inherit;line-height:1.65;padding:0;margin:0;border:0}
+.bubble-mode #open-chat{display:inline-block}
+.bubble-mode:not(.bubble-expanded) #switch-view{display:none}
+.bubble-mode:not(.bubble-expanded) form{display:none}
+.bubble-mode:not(.bubble-expanded) .card:hover form,.bubble-mode:not(.bubble-expanded) form:focus-within,.bubble-mode.has-draft form{display:flex}
+.bubble-mode.bubble-expanded #history{display:block!important}
+.bubble-mode.bubble-expanded #last-message{display:none}
+.bubble-mode.bubble-expanded #latest:not([hidden]){display:block!important}
+.bubble-mode.bubble-expanded form{display:flex}
