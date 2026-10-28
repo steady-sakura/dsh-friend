@@ -11,4 +11,6 @@ credentials*
 settings.json
 preferences.json
 imports.json
+memory/
+chats/
 evidence/

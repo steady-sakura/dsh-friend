@@ -10,8 +10,10 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     let content = ''; for await (const chunk of req) content += chunk
     const body = JSON.parse(content); calls.push(body)
     const visual = Array.isArray(body.messages.at(-1).content)
+    const source = !visual && body.messages.at(-1).content.match(/原话来源 (chat:[a-f0-9-]+)/)?.[1]
+    const memory = source ? { diary: { text: '测试日记：今天接上了聊天。', sources: [source, 'reply'] }, remember: [{ text: '我喜欢星河饼干。', source }] } : undefined
     res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ say: visual ? '看到测试色块了。' : '你好，连接成功了。', actions: ['wave'] }) } }] }))
+    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ say: visual ? '看到测试色块了。' : '你好，连接成功了。', actions: ['wave'], ...(memory ? { memory } : {}) }) } }] }))
   })
   await new Promise(r => server.listen(0, '127.0.0.1', r))
   const address = 'http://127.0.0.1:' + server.address().port
@@ -34,6 +36,22 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     assert.equal(calls.length, 1)
     assert((await store.history()).some(row => row.text === '测试聊天'))
     assert((await store.history()).some(row => row.text === '你好，连接成功了。'))
+    assert(!calls[0].messages.some(message => typeof message.content === 'string' && message.content.includes('已授权的本机记忆背景')))
+    await waitFor(() => !engine.working, 'first journal persisted')
+    const localHits = await settingsWindow.webContents.executeJavaScript('window.settings.memorySearch({query:"测试聊天"})')
+    assert(localHits.total > 0)
+    const memoryDir = join(store.dir, 'sample-library'); await mkdir(join(memoryDir, 'journal'), { recursive: true }); await writeFile(join(memoryDir, 'MEMORY.md'), '导入测试：喜欢看流星。'); await writeFile(join(memoryDir, 'journal', '2024-01-01.md'), '旧日导入测试：看过月亮。')
+    await engine.imports.set('memory', memoryDir)
+    // Simulate the user's explicit checkbox approval, scoped to the visible localhost mock endpoint.
+    await settingsWindow.webContents.executeJavaScript('document.getElementById("memoryCloudConsent").checked = true; document.getElementById("form").requestSubmit()', true)
+    await waitFor(() => engine.config.memoryCloudConsent, 'memory consent saved')
+    await chat.window.webContents.executeJavaScript('document.getElementById("input").value = "我喜欢星河饼干。"; document.getElementById("form").requestSubmit()', true)
+    await waitFor(() => !engine.working && engine.recall.facts.length > 0, 'sourced long-term memory saved')
+    assert(calls.at(-1).messages.some(message => typeof message.content === 'string' && message.content.includes('喜欢看流星')))
+    await settingsWindow.webContents.executeJavaScript('document.getElementById("memory-query").value = "星河饼干"; document.getElementById("memory-search").click()', true)
+    await waitFor(() => settingsWindow.webContents.executeJavaScript('document.querySelectorAll(".memory-hit").length > 0'), 'memory search UI')
+    await settingsWindow.webContents.executeJavaScript('document.querySelector(".memory-hit button").click()', true)
+    await waitFor(() => settingsWindow.webContents.executeJavaScript('document.getElementById("memory-original").textContent.includes("星河饼干")'), 'original source viewer')
     const promptDir = join(store.dir, 'sample-role'); await mkdir(promptDir, { recursive: true }); await writeFile(join(promptDir, 'role.md'), '测试角色：喜欢蓝色。')
     await engine.imports.set('role', promptDir)
     await openCapture()
@@ -57,7 +75,7 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       await settingsWindow.webContents.executeJavaScript('document.getElementById("role-import").scrollIntoView()')
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'imports.png'), (await settingsWindow.webContents.capturePage()).toPNG())
     }
-    console.log('INTEGRATION_OK: UI save -> chat -> mock API -> stored reply -> animation playing -> selected test window -> vision API -> pause -> stop; role imported.')
+    console.log('INTEGRATION_OK: UI save -> chat -> mock API -> stored reply -> animation playing -> local diary/search -> explicit memory consent -> imported memory -> sourced note -> original viewer -> selected test window -> vision API -> pause -> stop; role imported.')
   } finally { fixture?.destroy(); server.closeAllConnections(); server.close() }
 }
 module.exports = { run }

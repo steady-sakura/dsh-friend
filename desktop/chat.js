@@ -42,7 +42,7 @@ function render(value) {
   $('voice').checked = value.voice
   const status = !chat.opened ? '这段桌面聊天已结束，请重新打开桌宠。' : !chat.ready ? '先在右键菜单的 API 设置中填入密钥。' : chat.working ? '正在想……' : chat.pending ? '消息已保存，等她接话。' : '桌面聊天已连接。'
   document.body.classList.toggle('connection-problem', !chat.opened || !chat.ready || Boolean(value.voiceProblem))
-  $('status').textContent = (value.error || status) + (capture.active ? ' 正在看：' + capture.source : capture.phase === 'paused' ? ' 看画面已暂停。' : ' 当前没有共享画面。') + (value.voiceProblem ? ' ' + value.voiceProblem : '')
+  $('status').textContent = (value.error || status) + (capture.active ? ' 正在看：' + capture.source : capture.phase === 'paused' ? ' 看画面已暂停。' : ' 当前没有共享画面。') + (value.voiceProblem ? ' ' + value.voiceProblem : '') + (value.memoryIssue ? ' ' + value.memoryIssue : '')
   if (pickerNotice) $('status').textContent = pickerNotice.message
   $('status').title = $('status').textContent; $('pause').textContent = capture.phase === 'paused' ? '继续看' : '暂停看'
   $('pause').disabled = capture.phase === 'off' || capture.phase === 'paused' && capture.resumeBlocked === true

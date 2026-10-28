@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import { validateConfig } from './config.mjs'
+import { validateConfig, memoryAllowed } from './config.mjs'
+import { selectHistory } from './api.mjs'
 
 export class Companion {
-  constructor({ store, vault, api, catalog, imports, onChange = () => {} }) {
+  constructor({ store, vault, api, catalog, imports, recall, onChange = () => {} }) {
     this.imports = imports
+    this.recall = recall
     this.admitting = new Set()
     Object.assign(this, { store, vault, api, catalog, onChange }); this.history = []; this.sessionId = randomUUID(); this.working = false; this.pending = []; this.command = null; this.actionQueue = []; this.capture = { phase: 'off', active: false, source: '', ownerOnline: true }; this.closed = false; this.error = ''; this.generation = 0; this.lastActivity = Date.now()
   }
   async init() { this.config = validateConfig(await this.store.read('settings.json', {})); this.history = await this.store.history() }
   ready() { return Boolean(this.vault.keys.apiKey) }
-  state() { return { chat: { opened: !this.closed, ready: this.ready(), working: this.working, pending: this.pending.length > 0, sessionId: this.sessionId, history: this.history.slice(-120) }, capture: { ...this.capture }, pet: { command: this.command }, error: this.error, name: this.config.name } }
+  state() { return { chat: { opened: !this.closed, ready: this.ready(), working: this.working, pending: this.pending.length > 0, sessionId: this.sessionId, history: this.history.slice(-120) }, capture: { ...this.capture }, pet: { command: this.command }, error: this.error, name: this.config.name, memory: { enabled: this.config.memoryEnabled, cloud: memoryAllowed(this.config), ...(this.recall?.status() || {}) }, memoryIssue: this.memoryIssue || '' } }
   async saveConfig(input) {
     const config = validateConfig(input)
     this.cancel(); this.stopCapture()
@@ -42,15 +44,35 @@ export class Companion {
   async turn({ kind, prompt, row, image }) {
     if (this.working || this.closed) return false
     this.working = true; this.activeKind = kind; this.error = ''; const epoch = this.generation
-    this.controller = new AbortController(); this.onChange()
+    this.controller = new AbortController(); const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(120000)]); this.onChange()
     try {
       const history = row ? this.history.filter(r => r !== row && !(r.role === 'user' && r.status === 'working')) : this.history
-      const result = await this.api.complete({ config: this.config, keys: this.vault.keys, history, prompt, image, signal: this.controller.signal, catalog: this.catalog, imported: this.imports?.context() })
+      const useMemory = this.recall && memoryAllowed(this.config, Boolean(image))
+      let context, result
+      if (useMemory) {
+        await this.recall.refresh()
+        context = this.recall.context(row?.text || selectHistory(history).slice(-3).map(r => r.text).join('\n') || prompt)
+        for (const source of [...selectHistory(history), ...(row ? [row] : [])]) context.refs.set('chat:' + source.id, { id: 'chat:' + source.id, name: '聊天原话', type: 'chat', role: source.role, text: source.text, visibleText: source.text })
+      }
       if (epoch !== this.generation || this.closed) return false
-      if (result.say.trim()) await this.add('assistant', result.say.trim(), { trigger: kind })
+      let evidence = ''
+      for (let round = 0; round <= 2; round++) {
+        result = await this.api.complete({ config: this.config, keys: this.vault.keys, history, prompt: useMemory && row ? '[本次用户原话来源 chat:' + row.id + ']\n' + prompt : prompt, image, signal, catalog: this.catalog, imported: this.imports?.context(), recall: useMemory ? { text: context.text + evidence, remaining: 2 - round, receipts: this.recall.lastWrites } : null })
+        if (epoch !== this.generation || this.closed) return false
+        const needsRead = useMemory && (result.memory?.search?.length || result.memory?.read?.length)
+        if (!needsRead) break
+        if (round === 2) throw Error('记忆检索已达本轮上限，请换个具体关键词再试')
+        evidence += '\n【本轮实际检索/回查结果】\n' + this.recall.retrieve(result.memory, context.refs)
+      }
+      if (epoch !== this.generation || this.closed) return false
+      const reply = result.say.trim() ? await this.add('assistant', result.say.trim(), { trigger: kind }) : null
       if (epoch !== this.generation || this.closed) return false
       for (const action of result.actions) this.act(action)
       if (row) { row.status = 'done'; await this.store.append(row) }
+      if (this.recall && this.config.memoryEnabled) {
+        try { await this.recall.record({ turnId: row?.id || reply?.id || randomUUID(), kind, user: row, reply, memory: useMemory ? result.memory || {} : {}, refs: context?.refs || new Map() }); this.memoryIssue = '' }
+        catch { this.memoryIssue = '本次聊天已保存，但日记或长期摘记未能写入。请检查数据目录。' }
+      }
       return true
     } catch (err) {
       if (row) { row.status = 'error'; row.problem = epoch !== this.generation ? '请求已取消，请按需重新发送。' : err.message; await this.store.append(row) }
@@ -107,5 +129,6 @@ export class Companion {
     this.closed = true; this.cancel(); this.stopCapture()
     for (const row of this.pending.splice(0)) { row.status = 'error'; row.problem = '关闭时未发送，请按需重新发送。'; await this.store.append(row) }
     await this.store.writes
+    await this.recall?.jobs
   }
 }

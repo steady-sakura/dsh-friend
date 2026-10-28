@@ -3,6 +3,7 @@ export const defaults = {
   visionBaseURL: '', visionModel: '', visionEnabled: false,
   name: '小鲸', persona: '说中文口语，短句。像朋友一样相处，有自己的判断和好奇心。不要表演热情，不把没看到的事说成看过。',
   proactive: true, proactiveSeconds: 300, observeSeconds: 30,
+  memoryEnabled: true, memoryCloudConsent: false, memoryConsentEndpoints: [],
 }
 export function endpoint(base, suffix = 'chat/completions') {
   let url
@@ -11,6 +12,10 @@ export function endpoint(base, suffix = 'chat/completions') {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) throw Error('API 必须使用 HTTPS；本机服务可使用 HTTP')
   return url.href.replace(/\/+$/, '') + '/' + suffix
+}
+export function memoryAllowed(config, image = false) {
+  const destination = endpoint(image && config.visionBaseURL ? config.visionBaseURL : config.baseURL)
+  return config.memoryEnabled === true && config.memoryCloudConsent === true && Array.isArray(config.memoryConsentEndpoints) && config.memoryConsentEndpoints.includes(destination)
 }
 export function validateConfig(input) {
   const config = { ...defaults }
@@ -23,7 +28,10 @@ export function validateConfig(input) {
   endpoint(config.baseURL)
   if (config.visionBaseURL) endpoint(config.visionBaseURL)
   if (!config.model || !config.name) throw Error('请填写模型名称和称呼')
-  for (const key of ['visionEnabled', 'proactive']) if (input[key] !== undefined) config[key] = input[key] === true
+  for (const key of ['visionEnabled', 'proactive', 'memoryEnabled', 'memoryCloudConsent']) if (input[key] !== undefined) config[key] = input[key] === true
+  const allowedDestinations = [endpoint(config.baseURL), ...(config.visionBaseURL ? [endpoint(config.visionBaseURL)] : [])]
+  config.memoryConsentEndpoints = config.memoryCloudConsent && Array.isArray(input.memoryConsentEndpoints) ? [...new Set(input.memoryConsentEndpoints.filter(value => allowedDestinations.includes(value)))] : []
+  if (!config.memoryConsentEndpoints.length) config.memoryCloudConsent = false
   config.observeSeconds = [5, 10, 20, 30, 60, 120].includes(Number(input.observeSeconds)) ? Number(input.observeSeconds) : defaults.observeSeconds
   config.proactiveSeconds = Math.round(Math.max(30, Math.min(3600, Number(input.proactiveSeconds) || defaults.proactiveSeconds)))
   return config

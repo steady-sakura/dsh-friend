@@ -23,7 +23,8 @@ async function start() {
   let preference = await store.read('preferences.json', { voice: false })
   const save = patch => { Object.assign(preference, patch); return store.write('preferences.json', preference) }
   const { Imports } = await import('../src/imports.mjs'); const imports = new Imports(store); await imports.init()
-  const engine = new Companion({ store, vault, api, catalog: actions, imports }); await engine.init()
+  const { Recall } = await import('../src/recall.mjs'); const recall = new Recall({ store, imports }); await recall.init()
+  const engine = new Companion({ store, vault, api, catalog: actions, imports, recall }); await engine.init()
   const protect = (window, capture = false) => {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', event => event.preventDefault())
@@ -71,16 +72,20 @@ async function start() {
   }
   ipcMain.handle('friend-settings', async (event, action, body = {}) => {
     if (!trusted(event, settingsWindow, 'settings.html')) throw Error('设置入口无效')
-    if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status() }
+    if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status(), memory: recall.status() }
     if (action === 'choose') {
       if (!['role', 'memory'].includes(body.kind)) throw Error('请选择角色或记忆')
       const result = await dialog.showOpenDialog(settingsWindow, { title: body.kind === 'role' ? '选择角色提示词文件夹' : '选择记忆文件夹', properties: ['openDirectory'] })
       if (result.canceled) return imports.status()
-      engine.cancel(); return imports.set(body.kind, result.filePaths[0])
+      engine.cancel(); const status = await imports.set(body.kind, result.filePaths[0]); await recall.refresh(); return status
     }
-    if (action === 'clear') { engine.cancel(); return imports.set(body.kind, '') }
-    if (action === 'refresh') { engine.cancel(); return imports.refresh() }
-    if (action === 'save') { const result = await engine.saveConfig(body); return { ...result, dataDir, imports: imports.status() } }
+    if (action === 'clear') { engine.cancel(); const status = await imports.set(body.kind, ''); await recall.refresh(); return status }
+    if (action === 'refresh') { engine.cancel(); const status = await imports.refresh(); await recall.refresh(); return status }
+    if (action === 'save') { const result = await engine.saveConfig(body); return { ...result, dataDir, imports: imports.status(), memory: recall.status() } }
+    if (action === 'memory-status') { await recall.refresh(); return recall.status() }
+    if (action === 'memory-search') { await recall.refresh(); return recall.search(body.query, { offset: body.offset, limit: 8 }) }
+    if (action === 'memory-read') { await recall.refresh(); return recall.read(body.sourceId, body) }
+    if (action === 'memory-folder') { const error = await shell.openPath(join(dataDir, 'memory')); if (error) throw Error('无法打开记忆目录'); return {} }
     if (action === 'folder') { const error = await shell.openPath(dataDir); if (error) throw Error('无法打开数据目录'); return {} }
     if (action === 'test') {
       if (engine.working) throw Error('请等当前请求完成后测试')
