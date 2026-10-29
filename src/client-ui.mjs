@@ -42,8 +42,20 @@ export function createLauncherUI(React, launcherDescriptors) {
         state?.version && h('small', null, (state.running ? '已加载桌宠 ' : '上次加载桌宠 ') + state.version)))
   }
   return { inject: ['slots', 'remote'], async apply(ctx) {
-    await ctx.remote.$mount({ package: 'dsh-friend', descriptors: launcherDescriptors })
-    const remote = ctx.remote.friendLauncher
+    // This namespace is created by $mount, so it cannot be a prerequisite of
+    // this same plugin. Resolve it in a child fiber after mounting instead.
+    let mountedRemote = null
+    const remote = Object.fromEntries(launcherDescriptors.map(({ method }) => [method, (...args) => mountedRemote ? mountedRemote[method](...args) : Promise.resolve({ ok: false })]))
     ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ id: 'dsh-friend-launcher', name: 'sidebar.footer.action', inject: () => ({ remote }) }, Launcher))
+    try {
+      await ctx.remote.$mount({ package: 'dsh-friend', descriptors: launcherDescriptors })
+      await ctx.inject(['remote.friendLauncher'], child => {
+        mountedRemote = child.remote.friendLauncher
+        return () => { mountedRemote = null }
+      })
+    } catch {
+      // This optional surface must never take the entire Web shell down.
+      ctx.logger?.warn('DSH Friend 网页控制未就绪；主界面继续加载，可检查插件版本后重试。')
+    }
   } }
 }

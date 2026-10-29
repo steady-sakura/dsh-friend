@@ -6,6 +6,8 @@
 
 ## 安装到 DSH
 
+若 0.5.0 出现 `Failed to load plugins / dsh-friend: failed`，请更新到 0.5.1：该版本修正网页控制命名空间的依赖注入，并在可选控制服务不可用时保留 Web 主界面。回归测试使用真实的 Cordis 插件激活、浏览器 Remote 与插槽注册器。
+
 需要 Node.js 22.12+，建议使用 DSH 0.2.0-rc.2。插件使用 Cordis 的 `commands`、`pluginManager`、`profileContext` 与 `typert` 服务，已附带网页模块，不需要安装时编译。
 
 ```powershell

@@ -55,6 +55,6 @@ test('committed browser module matches source and registers an additive sidebar 
   let plugin, mounted, registered, component
   vm.runInNewContext(bundle, { window: { __ModuleLoader__: { load: value => { assert.equal(value.id, 'dsh-friend'); plugin = value.factory(name => { assert.equal(name, 'react'); return {} }) } } } })
   const remote = { $mount: async value => { mounted = value }, friendLauncher: {} }
-  await plugin.apply({ remote, slots: { inject: (name, fn) => { assert.equal(name, 'sidebar.footer.action'); fn() }, register: (options, render) => { registered = options; component = render } } })
+  await plugin.apply({ remote, inject: (_keys, fn) => fn({ remote }), slots: { inject: (name, fn) => { assert.equal(name, 'sidebar.footer.action'); fn() }, register: (options, render) => { registered = options; component = render } } })
   assert.equal(mounted.descriptors.length, launcherDescriptors.length); assert.equal(registered.id, 'dsh-friend-launcher'); assert.equal(typeof component, 'function')
 })

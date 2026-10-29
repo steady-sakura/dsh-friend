@@ -1,6 +1,6 @@
 {
   "name": "dsh-friend",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "DSH 桌面陪伴：dsh-pet 动画、独立 API 聊天与经过授权的屏幕观察",
   "type": "module",
   "main": "src/plugin.mjs",
@@ -82,6 +82,8 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-api-gateway": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
     "react": "18.3.1",
     "react-dom": "18.3.1"
