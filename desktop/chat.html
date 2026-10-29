@@ -9,6 +9,7 @@
   <div id="session-browser" hidden><div id="session-list"></div><button id="sessions-more" hidden>更多会话</button></div><p id="history-label" hidden></p>
   <div id="history" tabindex="0" aria-label="桌面聊天记录，可上下滚动"><p class="empty">想说什么，直接写在这里。</p></div>
   <button id="latest" hidden>有新消息 · 回到最新</button>
+  <details id="receipts" class="delivery-panel"><summary>未发原话与回执</summary><p class="delivery-hint">原文留底不代表已发送。查看和结束提醒不会补发、朗读或执行动作。</p><button id="delivery-refresh" type="button">读取回执</button><p id="delivery-status" role="status" aria-live="polite"></p><pre id="delivery-original" tabindex="0" aria-label="回复原文，仅供查看"></pre><div id="delivery-list"></div><button id="delivery-more" type="button" hidden>更早的回执</button></details>
   <form id="form"><textarea id="input" maxlength="4000" rows="2" aria-label="给小鲸的消息" placeholder="跟小鲸聊两句……"></textarea><button id="send" type="submit">发送</button></form>
   <footer class="panel-only">拖标题调距离 · 拖边角缩放 · Enter发送，Shift+Enter换行</footer>
 </main><div id="message-measure" aria-hidden="true"></div><script type="module" src="chat.js"></script></body></html>

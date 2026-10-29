@@ -44,15 +44,15 @@ test('API integration sends text + allowlisted catalog to exact configured endpo
   const server = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk
     request = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body) }
-    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ say: '你好', actions: [actions[0].id] }) } }] }))
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ say: '你好', actions: [actions[0].id] }) } }] }))
   })
   await new Promise(r => server.listen(0, '127.0.0.1', r)); t.after(() => { server.closeAllConnections(); server.close() })
-  const result = await new API().complete({ config: { ...defaults, baseURL: 'http://127.0.0.1:' + server.address().port + '/v1' }, keys: { apiKey: key }, history: [], prompt: 'hello', catalog: actions })
+  const result = await new API().complete({ config: { ...defaults, replyMode: 'legacy', baseURL: 'http://127.0.0.1:' + server.address().port + '/v1' }, keys: { apiKey: key }, history: [], prompt: 'hello', catalog: actions })
   assert.equal(request.url, '/v1/chat/completions'); assert.equal(request.auth, 'Bearer ' + key); assert.equal(request.body.messages.at(-1).content, 'hello'); assert.equal(result.actions[0], actions[0].id)
 })
 test('API supports a separate vision provider and never passes the text key there', async () => {
   let seen
-  const api = new API({ fetchImpl: async (url, init) => { seen = { url, ...init }; return new Response(JSON.stringify({ choices: [{ message: { content: '{"say":"看到了","actions":[]}' } }] })) } })
+  const api = new API({ fetchImpl: async (url, init) => { seen = { url, ...init }; return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"say":"看到了","actions":[]}' } }] })) } })
   await api.complete({ config: { ...defaults, visionEnabled: true, visionBaseURL: 'https://vision.example/v1', visionModel: 'vision-model' }, keys: { apiKey: key, visionApiKey: 'vision-test-only' }, history: [], prompt: '看', image: 'data:image/jpeg;base64,AA==', catalog: actions })
   assert.equal(seen.headers.Authorization, 'Bearer vision-test-only'); const payload = JSON.parse(seen.body); assert.equal(payload.model, 'vision-model'); assert.equal(payload.messages.at(-1).content[1].type, 'image_url')
 })
@@ -95,13 +95,14 @@ test('concurrent input retries cannot admit the same ID twice', async () => {
 test('canceled late response cannot speak or animate', async () => {
   let complete
   const { engine } = await fixture({ complete: () => new Promise(r => { complete = r }) })
-  const turn = engine.turn({ kind: 'proactive', prompt: 'x' }); engine.cancel(); complete({ say: '迟到', actions: [actions[0].id] }); await turn
+  const turn = engine.turn({ kind: 'proactive', prompt: 'x' }); await until(() => Boolean(complete)); engine.cancel(); complete({ say: '迟到', actions: [actions[0].id] }); await turn
   assert.equal(engine.history.length, 0); assert.equal(engine.command, null)
 })
 test('user message queued behind canceled screen request is eventually processed', async () => {
   let release, calls = 0
   const { engine } = await fixture({ complete: async () => { if (++calls === 1) return new Promise(r => { release = r }); return { say: '接上了', actions: [] } } })
   const prior = engine.turn({ kind: 'screen', prompt: 'screen' })
+  await until(() => Boolean(release))
   await engine.input({ id: '22222222-2222-2222-2222-222222222222', text: '我来了' }); release({ say: '过时', actions: [] }); await prior
   await until(() => calls === 2 && !engine.working); assert.equal(engine.history.at(-1).text, '接上了')
 })

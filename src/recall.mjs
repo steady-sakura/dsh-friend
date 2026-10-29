@@ -103,7 +103,8 @@ export class Recall {
       })
       for (const row of records || []) rows.set(row.id, { ...row, file: name })
     }
-    for (const row of rows.values()) if (safeText(row.text)) add('chats/' + row.file + '#' + row.id, 'chat', row.text, { id: 'chat:' + row.id, role: row.role, at: row.at, status: row.status })
+    const receipts = this.replyReceipts ||= new Map()
+    for (const row of rows.values()) if (safeText(row.text) && await isAcceptedReply(this.store.dir, row, receipts)) add('chats/' + row.file + '#' + row.id, 'chat', row.text, { id: 'chat:' + row.id, role: row.role, at: row.at, status: row.status })
     this.revision++; return this.status()
   }
   status() {
@@ -222,3 +223,4 @@ export class Recall {
     this.lastWrites = writes; await this.refresh(); return writes
   }
 }
+import { isAcceptedReply } from './deliveries.mjs'

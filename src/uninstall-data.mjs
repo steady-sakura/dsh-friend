@@ -7,6 +7,7 @@ export const OWNER_FILE = '.dsh-friend-data.json'
 const dirs = ['chats', 'sessions', 'memory', 'keeps', 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'blob_storage', 'Local Storage', 'Session Storage', 'Network', 'Partitions', 'Shared Dictionary', 'VideoDecodeStats', 'Crashpad', 'Crash Reports', 'BrowserMetrics', 'WebStorage', 'Dictionaries', 'shared_proto_db', 'Platform Notifications', 'Service Worker']
 const files = ['settings.json', 'preferences.json', 'credentials.json', 'imports.json', 'input-receipts.jsonl', 'input-receipts-ready.json', 'Local State', 'Preferences', 'DIPS', 'DIPS-wal', 'DIPS-shm', 'Visited Links', 'TransportSecurity', 'Network Persistent State', 'First Run', 'lockfile', 'chrome_debug.log', 'DevToolsActivePort', 'SingletonLock', 'SingletonCookie', 'SingletonSocket']
 const managed = new Set([...dirs, ...files])
+managed.add('deliveries')
 const isManaged = name => managed.has(name) || /^(?:settings|preferences|credentials|imports|input-receipts-ready)\.json\.[a-f0-9-]{36}\.tmp$/.test(name)
 const key = path => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
 const within = (base, path) => key(path) === key(base) || key(path).startsWith(key(base) + sep)

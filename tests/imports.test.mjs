@@ -39,5 +39,5 @@ test('import paths persist locally, refresh reloads changes, and clear stops add
   await restored.set('role', ''); assert.equal(restored.context().role, '')
 })
 test('role stays separate from gated retrieved memory', () => {
-  const text = systemPrompt(defaults, [], { role: '角色测试', memory: '不可直接注入的记忆' }, { text: '有出处的记忆' }); assert(text.includes('角色测试')); assert(!text.includes('不可直接注入')); assert(text.includes('可能过时')); assert(text.includes('始终输出 JSON'))
+  const text = systemPrompt(defaults, [], { role: '角色测试', memory: '不可直接注入的记忆' }, { text: '有出处的记忆' }); assert(text.includes('角色测试')); assert(!text.includes('不可直接注入')); assert(text.includes('可能过时')); assert(text.includes('直接写自然正文'))
 })

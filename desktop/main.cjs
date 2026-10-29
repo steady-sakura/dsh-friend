@@ -13,7 +13,7 @@ async function start() {
   app.setName('dsh-friend')
   const sendParent = message => { if (process.connected) { try { process.send(message, () => {}) } catch {} } }
   const version = require('../package.json').version
-  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1, uninstall: 1 }
+  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1, uninstall: 1, plainReply: 1, delivery: 1 }
   // Personal state never lives in the installed plugin or working repository.
   const dataDir = process.env.DSH_FRIEND_DATA_DIR || join(app.getPath('appData'), 'dsh-friend')
   const { ensureDataOwner, makeCleanupPlan } = await import('../src/uninstall-data.mjs')
@@ -193,6 +193,13 @@ async function start() {
     if (closing) throw Error('桌宠正在关闭')
     if (!petSender && ['catalog', 'action-ack', 'interact', 'pointer', 'expand', 'drag-start', 'drag-end', 'menu', 'close'].includes(action)) throw Error('仅供桌宠身体使用')
     if (action === 'state') return state()
+    if (['deliveries', 'delivery-read', 'delivery-dismiss', 'delivery-verify'].includes(action)) {
+      if (!chatSender) throw Error('回执仅供聊天窗口查看')
+      if (action === 'deliveries') return engine.deliveries.list(body)
+      if (action === 'delivery-read') return engine.deliveries.read(body.id)
+      if (action === 'delivery-dismiss') return engine.deliveries.dismiss(body.id)
+      return engine.deliveries.verify(body.id)
+    }
     if (action === 'catalog') return actions
     if (['draft', 'sessions', 'history', 'keep-frame', 'look-frame'].includes(action) && !chatSender) throw Error('此操作仅供聊天窗口使用')
     if (action === 'draft') return body.text === undefined ? drafts.read() : drafts.write(body)
@@ -293,4 +300,4 @@ async function start() {
     process.stdout.write(JSON.stringify(report) + '\n'); await close(); if (Object.values(report).some(v => v === false)) process.exitCode = 1
   }
 }
-start().catch(() => { process.stderr.write('桌面陪伴启动失败，请检查本机数据目录和 Electron 运行时。\n'); app.exit(1) })
+start().catch(error => { if (process.argv.includes('--smoke') && process.env.DSH_FRIEND_INTEGRATION === '1') process.stderr.write(String(error.stack || error) + '\n'); process.stderr.write('桌面陪伴启动失败，请检查本机数据目录和 Electron 运行时。\n'); app.exit(1) })

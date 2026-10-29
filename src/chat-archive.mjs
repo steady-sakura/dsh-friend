@@ -1,6 +1,7 @@
 import { lstat, open, readdir, realpath, appendFile } from 'node:fs/promises'
 import { join, resolve, parse, sep } from 'node:path'
 import { createHash } from 'node:crypto'
+import { isAcceptedReply } from './deliveries.mjs'
 
 const sessionFile = /^sessions\/[a-f0-9-]{36}\.jsonl$/
 const legacyFile = /^legacy\/\d{4}-\d{2}-\d{2}\.jsonl$/
@@ -90,6 +91,7 @@ export class ChatArchive {
         newest = false; recovery = row.kind === 'tail-recovery' ? row.hash : null
         if (typeof row.id !== 'string' || !['user', 'assistant', 'interaction'].includes(row.role) || typeof row.text !== 'string' || seen.has(row.id) || mirrored.has(row.sessionId)) continue
         seen.add(row.id)
+        if (!await isAcceptedReply(this.store.dir, row, this.replyReceipts ||= new Map())) continue
         if (!found) { if (row.id === beforeId) found = true; continue }
         if (before && line.offset >= before.offset) continue
         results.push({ row: { ...row, ...(row.role === 'user' ? { status: 'archived' } : {}) }, offset: line.offset })

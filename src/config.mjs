@@ -4,6 +4,7 @@ export const defaults = {
   name: '小鲸', persona: '说中文口语，短句。像朋友一样相处，有自己的判断和好奇心。不要表演热情，不把没看到的事说成看过。',
   proactive: true, proactiveSeconds: 300, observeSeconds: 30,
   memoryEnabled: true, memoryCloudConsent: false, memoryConsentEndpoints: [],
+  replyMode: 'plain',
 }
 export function endpoint(base, suffix = 'chat/completions') {
   let url
@@ -26,6 +27,7 @@ export function validateConfig(input) {
     }
   }
   endpoint(config.baseURL)
+  config.replyMode = input.replyMode === 'legacy' ? 'legacy' : 'plain'
   if (config.visionBaseURL) endpoint(config.visionBaseURL)
   if (!config.model || !config.name) throw Error('请填写模型名称和称呼')
   for (const key of ['visionEnabled', 'proactive', 'memoryEnabled', 'memoryCloudConsent']) if (input[key] !== undefined) config[key] = input[key] === true

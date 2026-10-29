@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { appendRecord } from './chat-archive.mjs'
+import { isAcceptedReply } from './deliveries.mjs'
 
 export class Store {
   constructor(dir) { this.dir = dir; this.writes = Promise.resolve(); this.admitted = new Set() }
@@ -72,6 +73,8 @@ export class Store {
       }
       if (rows.size >= limit || names.indexOf(name) >= 30) break
     }
-    return [...rows.values()].reverse().sort((a, b) => String(a.at || '').localeCompare(String(b.at || ''))).map(row => row.role === 'user' && row.status === 'working' ? { ...row, status: 'error', problem: '上次退出时尚未完成，请按需重新发送。' } : row)
+    const accepted = [], receipts = this.replyReceipts ||= new Map()
+    for (const row of rows.values()) if (await isAcceptedReply(this.dir, row, receipts)) accepted.push(row)
+    return accepted.reverse().sort((a, b) => String(a.at || '').localeCompare(String(b.at || ''))).map(row => row.role === 'user' && row.status === 'working' ? { ...row, status: 'error', problem: '上次退出时尚未完成，请按需重新发送。' } : row)
   }
 }

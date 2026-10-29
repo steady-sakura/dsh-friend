@@ -39,12 +39,41 @@ function view(next, details = false) {
   queueFit()
 }
 function problem(error) { $('status').textContent = String(error?.message || error); $('status').title = $('status').textContent; document.body.classList.add('connection-problem'); queueFit() }
+const deliveryLabels = { generating: '正在生成', saved: '已留底，未确认发送', sending: '正在保存聊天', accepted: '本机聊天已保存', quiet: '本轮没有发言', context: '检索过程，仅留底', failed: '失败，未正常发送', unknown: '结果待核对' }
+let deliveryBefore = null, deliveryBusy = false
+async function loadDeliveries(append = false) {
+  if (deliveryBusy) return; deliveryBusy = true; $('delivery-refresh').disabled = true
+  try {
+    const result = await call('deliveries', { before: append ? deliveryBefore : null, limit: 8 })
+    if (!append) $('delivery-list').replaceChildren()
+    for (const row of result.items) {
+      const item = document.createElement('div'); item.className = 'delivery-row'
+      const title = document.createElement('p'); title.textContent = (deliveryLabels[row.status] || row.status) + (row.dismissed ? ' · 已结束提醒' : '') + ' · ' + (row.at ? new Date(row.at).toLocaleString() : row.id)
+      const reason = document.createElement('p'); reason.textContent = (row.reason || '此处不代表本人已读。') + (row.controlIssue ? ' ' + row.controlIssue : '')
+      const action = (text, fn) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.disabled = row.unreadable === true; button.onclick = async () => { button.disabled = true; try { await fn() } catch (error) { $('delivery-status').textContent = error.message } finally { button.disabled = false } }; return button }
+      const read = action('查看原文', async () => { const value = await call('delivery-read', { id: row.id }); $('delivery-original').textContent = value.originalText || '本次没有取得可保留的正文。'; $('delivery-status').textContent = (deliveryLabels[value.status] || value.status) + '：' + value.reason + (value.controlIssue ? ' ' + value.controlIssue : '') + (value.originalTruncated ? ' 留底达到大小限制，非完整原文。' : ''); $('delivery-original').scrollIntoView({ block: 'nearest' }); $('delivery-original').focus({ preventScroll: true }) })
+      item.append(title, reason, read)
+      if (row.status === 'unknown') item.append(action('核对本机记录', async () => { const value = await call('delivery-verify', { id: row.id }); $('delivery-status').textContent = value.message; await loadDeliveries() }))
+      if (!row.dismissed && ['failed', 'unknown', 'context'].includes(row.status)) item.append(action('结束提醒', async () => { await call('delivery-dismiss', { id: row.id }); await loadDeliveries(); $('delivery-status').textContent = '提醒已结束，原文和实际状态保留；未补发。' }))
+      $('delivery-list').append(item)
+    }
+    deliveryBefore = result.nextBefore; $('delivery-more').hidden = !deliveryBefore
+    if (!result.items.length && !append) $('delivery-status').textContent = '还没有回执。新回复会在本机留底。'
+  } catch (error) { $('delivery-status').textContent = '回执暂时无法读取，聊天仍可继续。' }
+  finally { deliveryBusy = false; $('delivery-refresh').disabled = false }
+}
+$('delivery-refresh').onclick = () => loadDeliveries()
+$('delivery-more').onclick = () => loadDeliveries(true)
+$('receipts').ontoggle = () => { if ($('receipts').open) void loadDeliveries() }
 function render(value) {
   snapshot = value; view(value.chatView, value.bubbleExpanded === true)
   const { chat, capture } = value; $('voice').checked = value.voice
   const status = !chat.opened ? '桌面聊天已结束。' : !chat.ready ? '先在 API 设置中填入密钥。' : chat.working ? '正在处理当前请求……' : chat.pending ? '消息已保存，等待接话。' : '桌面聊天可用。'
-  document.body.classList.toggle('connection-problem', !chat.opened || !chat.ready || Boolean(value.voiceProblem) || Boolean(value.memoryIssue))
+  const outcome = !chat.working && !chat.pending && chat.lastOutcome?.status === 'quiet' ? ' 本轮已完成，没有发言。' : !chat.working && ['failed', 'unknown'].includes(chat.lastOutcome?.status) ? ' 本轮未确认正常回复，可查看“未发原话与回执”。' : ''
+  document.body.classList.toggle('connection-problem', !chat.opened || !chat.ready || Boolean(value.voiceProblem) || Boolean(value.memoryIssue) || Boolean(value.error))
+  document.body.classList.toggle('has-outcome', Boolean(outcome))
   $('status').textContent = (value.error || status) + (capture.active ? ' 画面共享中，可按需分析：' + capture.source : capture.phase === 'paused' ? ' 画面分析已暂停。' : ' 当前没有共享画面。') + (capture.message ? ' ' + capture.message : '') + (browsing ? ' 正在翻旧记录，输入仍发到当前聊天。' : '') + (value.voiceProblem ? ' ' + value.voiceProblem : '') + (value.memoryIssue ? ' ' + value.memoryIssue : '')
+  if (outcome) $('status').textContent = outcome.trim() + ' ' + $('status').textContent
   if (pickerNotice) $('status').textContent = pickerNotice.message
   $('status').title = $('status').textContent; $('pause').textContent = capture.phase === 'paused' ? '继续看' : '暂停看'; $('pause').disabled = capture.phase === 'off'; $('send').disabled = sending || !chat.ready || !chat.opened
   $('look').disabled = !capture.active || chat.working; $('keep').disabled = !capture.latestFrame

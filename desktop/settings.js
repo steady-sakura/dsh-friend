@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id)
-const fields = ['baseURL', 'model', 'visionBaseURL', 'visionModel', 'name', 'persona', 'observeSeconds', 'proactiveSeconds']
+const fields = ['baseURL', 'model', 'visionBaseURL', 'visionModel', 'name', 'persona', 'observeSeconds', 'proactiveSeconds', 'replyMode']
 const bools = ['visionEnabled', 'proactive', 'memoryEnabled', 'memoryCloudConsent']
 function render(value) {
   for (const key of fields) $(key).value = value[key]

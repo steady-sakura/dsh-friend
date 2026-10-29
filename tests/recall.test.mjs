@@ -19,7 +19,7 @@ async function fixture() {
 }
 const granted = { ...defaults, memoryCloudConsent: true, memoryConsentEndpoints: [endpoint(defaults.baseURL)] }
 test('network boundary strips memory until explicit destination-scoped consent is saved', async () => {
-  const sent = [], api = new API({ fetchImpl: async (_url, init) => { sent.push(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: '{"say":"好","actions":[]}' } }] })) } })
+  const sent = [], api = new API({ fetchImpl: async (_url, init) => { sent.push(init.body); return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{"say":"好","actions":[]}' } }] })) } })
   const args = { keys: { apiKey: 'mock-only' }, history: [], prompt: '本轮输入', catalog: [], imported: { memory: '旧版直接注入不得使用' }, recall: { text: '本机私有记忆测试标记', remaining: 2, receipts: [] } }
   await api.complete({ ...args, config: defaults }); assert(!sent[0].includes('本机私有记忆测试标记')); assert(!sent[0].includes('旧版直接注入'))
   await api.complete({ ...args, config: granted }); assert(sent[1].includes('本机私有记忆测试标记'))

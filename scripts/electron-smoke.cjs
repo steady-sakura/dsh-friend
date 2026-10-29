@@ -10,13 +10,16 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
   const server = createServer(async (req, res) => {
     let content = ''; for await (const chunk of req) content += chunk
     const body = JSON.parse(content); calls.push(body)
+    const truncated = String(body.messages.at(-1).content).includes('截断回执测试')
     const visual = Array.isArray(body.messages.at(-1).content)
     const source = !visual && body.messages.at(-1).content.match(/原话来源 (chat:[a-f0-9-]+)/)?.[1]
     const frame = visual && body.messages.at(-1).content[0].text.match(/sessionId=([a-f0-9-]{36})，sha=([a-f0-9]{64})/)
     const keep = frame ? { sessionId: frame[1], sha: frame[2], note: '测试模型挑选的色块定格。' } : undefined
     const memory = source ? { diary: { text: '测试日记：今天接上了聊天。', sources: [source, 'reply'] }, remember: [{ text: '我喜欢星河饼干。', source }] } : undefined
     res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ say: visual ? '看到测试色块了。' : ['你好，连接成功了。', '这是同轮的第二段测试回复。'], actions: ['wave'], ...(memory ? { memory } : {}), ...(keep ? { keep } : {}) }) } }] }))
+    const controls = { actions: ['wave'], ...(memory ? { memory } : {}), ...(keep ? { keep } : {}) }
+    const native = Boolean(body.tools)
+    res.end(JSON.stringify({ choices: [{ finish_reason: truncated ? 'length' : native ? 'tool_calls' : 'stop', message: { content: truncated ? '这是未完成的合成原话。' : native ? '第一段自然正文。\n\n第二段可以讨论 </review-plan> 和 actions。' : JSON.stringify({ say: visual ? '看到测试色块了。' : ['你好，连接成功了。', '这是同轮的第二段测试回复。'], ...controls }), ...(native && !truncated ? { tool_calls: [{ id: 'call-desktop-fixture', type: 'function', function: { name: 'companion_control', arguments: JSON.stringify(controls) } }] } : {}) } }] }))
   })
   await new Promise(r => server.listen(0, '127.0.0.1', r))
   const address = 'http://127.0.0.1:' + server.address().port
@@ -27,6 +30,7 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       document.getElementById('model').value = 'test-model';
       document.getElementById('apiKey').value = 'test-only-not-a-real-credential';
       document.getElementById('proactive').checked = false;
+      document.getElementById('replyMode').value = 'legacy';
       document.getElementById('visionEnabled').checked = true;
       document.getElementById('form').requestSubmit();
     })()`, true)
@@ -101,13 +105,31 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     engine.stopCapture()
     await waitFor(() => capture.webContents.executeJavaScript('document.getElementById("preview").srcObject === null'), 'media tracks stopped')
     const history = await store.history(); assert(!JSON.stringify(history).includes('data:image/'))
+    await settingsWindow.webContents.executeJavaScript('document.getElementById("replyMode").value="plain";document.getElementById("form").requestSubmit()', true)
+    await waitFor(() => engine.config.replyMode === 'plain', 'plain reply mode saved')
+    await chat.window.webContents.executeJavaScript('document.getElementById("input").value="自然正文测试";document.getElementById("form").requestSubmit()', true)
+    await waitFor(() => !engine.working && engine.history.some(r => r.text.includes('第一段自然正文。')), 'native plain reply and controls')
+    const assistantIds = new Set((await store.history(1000)).filter(r => r.role === 'assistant').map(r => r.id))
+    await chat.window.webContents.executeJavaScript('document.getElementById("input").value="截断回执测试";document.getElementById("form").requestSubmit()', true)
+    await waitFor(() => !engine.working && engine.lastOutcome?.status === 'failed', 'truncated reply retained')
+    assert.equal((await store.history(1000)).filter(r => r.role === 'assistant' && !assistantIds.has(r.id)).length, 0)
+    const failedId = engine.lastOutcome.id, callCount = calls.length
+    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=true', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".delivery-row").length>0'), 'receipt list')
+    await chat.window.webContents.executeJavaScript('document.querySelector(".delivery-row button").click()', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("delivery-original").textContent.includes("这是未完成的合成原话。")'), 'original failed text shown safely')
+    await chat.window.webContents.executeJavaScript('[...document.querySelector(".delivery-row").querySelectorAll("button")].find(b=>b.textContent==="结束提醒").click()', true)
+    await waitFor(async () => (await engine.deliveries.read(failedId)).dismissed, 'dismiss retains failed state')
+    assert.equal((await engine.deliveries.read(failedId)).status, 'failed'); assert.equal(calls.length, callCount)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("status").textContent.includes("本轮未确认正常回复")'), 'terminal outcome shown')
     if (process.env.DSH_FRIEND_EVIDENCE_DIR) {
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'chat.png'), (await chat.window.webContents.capturePage()).toPNG())
+      await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'delivery.png'), (await chat.window.webContents.capturePage()).toPNG())
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'capture.png'), (await capture.webContents.capturePage()).toPNG())
       await settingsWindow.webContents.executeJavaScript('document.getElementById("role-import").scrollIntoView()')
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'imports.png'), (await settingsWindow.webContents.capturePage()).toPNG())
     }
-    console.log('INTEGRATION_OK: multi-reply preview, persisted drafts after reload, draft/send race, current and archived history pagination without replay, shared picker reuse, capture isolation, exact-frame keep, memory consent/retrieval, actual animation ack, selected fixture capture, pause and stop.')
+    console.log('INTEGRATION_OK: multi-reply preview, drafts, history without replay, capture isolation, exact keeps, memory consent, legacy and native plain replies, truncated originals, receipt viewer and dismissal without API replay.')
   } finally { fixture?.destroy(); server.closeAllConnections(); server.close() }
 }
 module.exports = { run }

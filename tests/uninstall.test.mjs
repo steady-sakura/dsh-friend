@@ -16,6 +16,7 @@ async function fixture() {
   const owner = await ensureDataOwner(root)
   assert.equal(owner.owned, true)
   await mkdir(join(root, 'chats')); await writeFile(join(root, 'chats', 'test.jsonl'), 'synthetic history')
+  await mkdir(join(root, 'deliveries')); await writeFile(join(root, 'deliveries', 'synthetic.json'), 'synthetic original text')
   await writeFile(join(root, 'credentials.json'), '{"synthetic":true}')
   await writeFile(join(root, 'preferences.json.' + randomUUID() + '.tmp'), 'synthetic unfinished write')
   return { root, parent, owner, plan: () => makeCleanupPlan(root, { owner }) }

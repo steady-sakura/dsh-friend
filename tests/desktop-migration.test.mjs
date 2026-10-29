@@ -128,7 +128,7 @@ test('frames remain a three-item in-memory ring; keeps use exact IDs and never r
 test('stale frame failures cannot pause a new source; successful silence does not retry the same frame', async () => {
   const { store } = await fixture(); let release, calls = 0
   const engine = new Companion({ store, vault: { keys: { apiKey: 'mock' } }, catalog: [], api: { complete: () => { calls++; return new Promise((_resolve, reject) => { release = reject }) } } }); await engine.init(); engine.config.visionEnabled = true
-  const old = engine.startCapture('old'), request = engine.frame({ image: 'data:image/jpeg;base64,AA==', generation: old.generation }); await tick()
+  const old = engine.startCapture('old'), request = engine.frame({ image: 'data:image/jpeg;base64,AA==', generation: old.generation }); for (let n = 0; !release && n < 200; n++) await new Promise(resolve => setTimeout(resolve, 5)); assert(release)
   const fresh = engine.startCapture('fresh'); release(Error('old failure')); await request; assert.equal(engine.capture.phase, 'active'); assert.equal(engine.capture.sessionId, fresh.sessionId)
   engine.api = { complete: async () => { calls++; return { say: '', actions: [] } } }; const body = { image: 'data:image/jpeg;base64,AQ==', generation: fresh.generation }
   await engine.frame(body); engine.observer.lastAttempt = 0; await engine.frame(body); assert.equal(calls, 2)
