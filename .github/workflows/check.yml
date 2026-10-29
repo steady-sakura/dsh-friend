@@ -17,3 +17,15 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm pack --dry-run --ignore-scripts
+  desktop-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+      - run: npm run test:launcher
+      - run: npm run test:uninstall

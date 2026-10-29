@@ -259,6 +259,11 @@ async function start() {
   powerMonitor.on('unlock-screen', () => { suspended = false; engine.lastActivity = Date.now() })
   globalShortcut.register('CommandOrControl+Alt+F8', () => { try { engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture() } catch (err) { notice(err.message) } })
   process.on('message', message => {
+    if (message?.type === 'dsh-friend-close') void close()
+    if (message?.type === 'dsh-friend-control' && /^[a-f0-9-]{36}$/.test(message.requestId) && !closing) {
+      const action = message.action === 'settings' ? openSettings : null
+      if (action) void Promise.resolve().then(action).then(() => sendParent({ type: 'dsh-friend-controlled', requestId: message.requestId }), () => {})
+    }
     if (message?.type === 'dsh-friend-host' && typeof message.profile === 'string') hostInfo = { profile: message.profile.slice(0, 200), canUninstall: message.canUninstall === true }
     if (message?.type === 'dsh-friend-uninstall-result' && message.requestId === parentRemoval?.requestId) parentRemoval.done({ removed: message.removed === true, code: typeof message.code === 'string' ? message.code : 'host-error' })
     if (message?.type === 'dsh-friend-uninstall-prompt' && /^[a-f0-9-]{36}$/.test(message.requestId)) {

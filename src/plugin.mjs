@@ -1,11 +1,13 @@
 import { PetHost } from './pet-host.mjs'
 import { removeFriend } from './uninstall-host.mjs'
+import { FriendLauncher } from './launcher-service.mjs'
 
 export const name = 'dsh-friend'
-export const inject = ['commands', 'pluginManager', 'profileContext']
+export const inject = ['commands', 'pluginManager', 'profileContext', 'typert']
 export function apply(ctx) {
   const manager = ctx.pluginManager
   const host = new PetHost({ profile: ctx.profileContext.name, remove: () => removeFriend(manager) })
+  new FriendLauncher(ctx, host)
   ctx.effect(() => ctx.commands.register({
     name: 'friend', description: '打开桌面陪伴、API 设置和屏幕共享', recordInput: false,
     handler: async () => {

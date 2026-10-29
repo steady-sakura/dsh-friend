@@ -6,13 +6,21 @@
 
 ## 安装到 DSH
 
-需要 Node.js 22.12+，建议使用 DSH 0.2.0-rc.2。插件使用 Cordis 的 `commands`、`pluginManager` 与 `profileContext` 服务，不需要编译。
+需要 Node.js 22.12+，建议使用 DSH 0.2.0-rc.2。插件使用 Cordis 的 `commands`、`pluginManager`、`profileContext` 与 `typert` 服务，已附带网页模块，不需要安装时编译。
 
 ```powershell
 dsh plugin --profile web add github:steady-sakura/dsh-friend
 ```
 
-安装后重新打开对应的 DSH，在输入框执行 **`/friend`**。第一次会打开 API 设置窗口。
+安装并启用后，网页左侧栏底部、设置附近会出现 **🐋 小鲸陪伴**。点开控制面板，选择 **打开桌宠**；运行后变成 **显示桌宠**。第一次会打开 API 设置窗口。仍可在输入框执行 **`/friend`**。
+
+桌宠按需启动，不会随 Web 自动弹出。Web 已运行时，随时点按钮即可打开、关闭和再打开桌宠，不需要重启服务，也不需要先创建聊天会话或发送一轮模型请求。
+
+**首次安装与升级的加载区别**：若网页未显示入口，先确认插件已启用，再刷新浏览器页面。DSH 0.2.0-rc.2 会缓存插件有没有网页模块；从 0.4 或更早版本升级时，旧 Web 进程可能仍需由本人正常重开一次，才能识别新增模块。宿主没有加载插件时，按钮无法代替插件加载；插件不会自动重启 Web。新版已加载后的日常桌宠开关无需重启。
+
+面板还有 **API 设置**、**关闭桌宠**、**找到独立启动入口** 和 **卸载插件…**。关闭只保存并退出桌宠，保留资料与 Web；下次点打开可重新启动。重复点打开/显示会唤回原窗口，保留共享和草稿。面板只显示此入口启动的进程状态；独立启动的桌宠请从其右键菜单设置或退出。
+
+按钮通过 DSH 自带的连接与 Gateway 控制六个固定操作，不另开本机 HTTP 服务，不读写 DSH 会话，不发送聊天或密钥到浏览器。通过远程浏览器连接 DSH 时，桌宠会显示在运行 DSH 的电脑上。
 
 默认已经填好 DeepSeek API 地址和 `deepseek-flash` 模型：填入自己的 API Key，点 **保存并开始**，双击桌宠就能聊。也可以修改地址和模型，使用兼容 Chat Completions 的服务。地址填写 API 根路径（例如带 `/v1` 的根地址），不要填写完整 `/chat/completions` 路径。密钥仅在本机设置窗口输入，不要发进 DSH 对话。
 
@@ -27,13 +35,15 @@ npm install
 npm start
 ```
 
-Windows 也可双击 `启动桌面陪伴.cmd`。有现成 DSH Electron 时，直接 `node scripts/start.mjs` 也能运行。独立运行不依赖 DSH 会话。
+Windows 也可双击 `启动桌面陪伴.cmd`。安装包现在也包含该文件；在网页控制面板点 **找到独立启动入口** 可定位安装目录。之后 Web 未运行时也能双击启动，不要求先开 DSH。macOS / Linux 提供 `启动桌面陪伴.command`，可用 `sh 启动桌面陪伴.command`；有现成 DSH Electron 时，直接 `node scripts/start.mjs` 也能运行。独立运行不依赖 DSH 会话。
 
 已经打开时再执行 `/friend`，通过父子 IPC 唤回原窗口，最小化时恢复，不冷启动另一套桌宠，也不重置共享、草稿或选择页面。启动和显示均有确认；超时不杀已有进程。桌宠入口没有固定钟点限制，不根据模型多久没回复来判断掉线。
 
 更新后先结束使用并关闭桌宠，再正常打开。设置页显示实际加载的运行版本。不会为升级自动重启宿主；插件使用自己的 API，不连接其他项目的主程序。用户关闭桌宠不停止 DSH；宿主明确停用插件时，会关闭对应桌宠并显示本机原因提示。
 
 ## 卸载与资料保留（0.4.0 起）
+
+0.5.0 起也可直接点网页 **小鲸陪伴 → 卸载插件…**，仍会打开相同的本机确认窗口。
 
 从 DSH 用 `/friend` 打开桌宠，在 **API 与偏好设置 → 卸载插件…** 操作；也可在 DSH 输入 **`/friend-uninstall`** 打开同一个本机确认窗口。模型没有卸载工具，命令本身只打开确认，不直接删除。
 
@@ -130,11 +140,14 @@ npm test
 npm run check
 npm run test:desktop
 npm run test:uninstall
+npm run test:launcher
 npm pack --dry-run
 ```
 
 测试使用模拟 API，不需要真实密钥。检查脚本验证 106 个素材的 SHA256、JavaScript 语法和发布目录中的疑似隐私内容。`test:desktop` 需要桌面环境与 Electron，使用隔离资料、本机模拟 API 和自建色块窗口，验证实际 IPC 唤回、连续回复预览、草稿重载及发送竞态、历史分页不重放、角色与记忆、动画确认、共享复用、精确帧保存及暂停/结束，不采集其他应用画面。证据仅留本机 `evidence/`，不提交。Windows 桌面端已实测；macOS / Linux 的实际窗口与系统录屏授权仍需对应平台实测。
 
 `test:uninstall` 在隔离目录用合成资料和模拟宿主移除结果验证取消、保留、删除、失败四条真实 Electron 流程；不调用用户当前配置的卸载接口，不删除用户资料。
+
+`test:launcher` 使用真实 React、DSH Gateway 和隔离 Electron，验证按钮按需启动、重复显示复用、API 设置、只刷新网页、关闭及重新打开。无需真实会话或 API Key；GitHub Windows 桌面任务会运行此测试及卸载测试。修改 `src/client-ui.mjs` 或共享控制契约后运行 `npm run build:client`，提交生成的 `web/client.js`；单元测试会核对源文件与预编译模块一致。
 
 API 格式及默认模型依据 [DeepSeek 官方文档](https://api-docs.deepseek.com/quick_start)；密钥保护与屏幕采集分别使用 Electron [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)、[desktopCapturer](https://www.electronjs.org/docs/latest/api/desktop-capturer)。

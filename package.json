@@ -1,19 +1,89 @@
 {
   "name": "dsh-friend",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "DSH 桌面陪伴：dsh-pet 动画、独立 API 聊天与经过授权的屏幕观察",
   "type": "module",
   "main": "src/plugin.mjs",
-  "bin": { "dsh-friend": "scripts/start.mjs" },
-  "exports": { ".": "./src/plugin.mjs", "./package.json": "./package.json" },
-  "files": ["src", "scripts/start.mjs", "desktop", "assets", "cordis.patch.yml", "README.md", "PRIVACY.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
-  "scripts": { "start": "node scripts/start.mjs", "test": "node --test tests/*.test.mjs", "test:desktop": "node scripts/test-desktop.mjs", "test:uninstall": "node scripts/test-uninstall.mjs", "check": "node scripts/check.mjs", "prepack": "npm test && npm run check" },
-  "engines": { "node": ">=22.12.0" },
-  "keywords": ["dsh-plugin", "deepseek-harness", "desktop-pet", "screen-sharing"],
+  "bin": {
+    "dsh-friend": "scripts/start.mjs"
+  },
+  "exports": {
+    ".": "./src/plugin.mjs",
+    "./client": "./web/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "web",
+    "scripts/start.mjs",
+    "启动桌面陪伴.cmd",
+    "启动桌面陪伴.command",
+    "desktop",
+    "assets",
+    "cordis.patch.yml",
+    "README.md",
+    "PRIVACY.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "start": "node scripts/start.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:desktop": "node scripts/test-desktop.mjs",
+    "test:uninstall": "node scripts/test-uninstall.mjs",
+    "test:launcher": "node scripts/test-launcher.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "check": "node scripts/check.mjs",
+    "prepack": "npm test && npm run check"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "desktop-pet",
+    "screen-sharing"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/steady-sakura/dsh-friend.git" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "dependencies": { "@electron/get": "^5.1.0", "@electron-internal/extract-zip": "^1.0.5" },
-  "peerDependencies": { "@deepseek-ai/cordis": "^4.0.4", "@deepseek-ai/dsh-commands": "^0.2.0-rc.1" },
-  "peerDependenciesMeta": { "@deepseek-ai/cordis": { "optional": true }, "@deepseek-ai/dsh-commands": { "optional": true } }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/steady-sakura/dsh-friend.git"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "@electron-internal/extract-zip": "^1.0.5",
+    "@electron/get": "^5.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-api-gateway": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.0-rc.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
 }

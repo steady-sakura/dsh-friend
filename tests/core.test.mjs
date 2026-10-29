@@ -10,6 +10,7 @@ import { Vault, defaults, endpoint, validateConfig } from '../src/config.mjs'
 import { API, parseReply } from '../src/api.mjs'
 import { Companion } from '../src/companion.mjs'
 import { apply, inject, name } from '../src/plugin.mjs'
+import { Context } from '@deepseek-ai/cordis'
 const require = createRequire(import.meta.url)
 const { actions } = require('../desktop/actions.cjs')
 const { CaptureConsent } = require('../desktop/consent.cjs')
@@ -144,8 +145,11 @@ test('layout keeps chat and dragged pet within display bounds', () => {
   const position = visiblePosition({ x: -99999, y: 99999 }, { width: 270, height: 250 }, area)
   assert(Number.isFinite(position.x) && position.y < 1080)
 })
-test('DSH plugin registers /friend command using Cordis effects', () => {
-  const effects = [], registered = []; apply({ effect: fn => effects.push(fn), pluginManager: {}, profileContext: { name: 'test' }, commands: { register: command => { registered.push(command); return () => {} } } }); effects[0](); effects[1]()
-  assert.equal(name, 'dsh-friend'); assert.deepEqual(inject, ['commands', 'pluginManager', 'profileContext']); assert.equal(registered[0].name, 'friend'); assert.equal(registered[0].recordInput, false)
+test('DSH plugin registers commands and a launcher without starting Electron or a model', async () => {
+  const registered = [], ctx = new Context(); let contract
+  ctx.provide('pluginManager', {}); ctx.provide('profileContext', { name: 'test' }); ctx.provide('typert', { register: value => { contract = value } })
+  ctx.provide('commands', { register: command => { registered.push(command); return () => {} } }); apply(ctx)
+  assert.equal(name, 'dsh-friend'); assert.deepEqual(inject, ['commands', 'pluginManager', 'profileContext', 'typert']); assert.equal(registered[0].name, 'friend'); assert.equal(registered[0].recordInput, false)
   assert.equal(registered[1].name, 'friend-uninstall'); assert.equal(registered[1].recordInput, false)
+  assert.equal(ctx.friendLauncher.status().running, false); assert.equal(contract.invocations.length, 6)
 })

@@ -5,6 +5,7 @@ export class PetHost {
   constructor({ start = launch, timeoutMs = 20000, profile = '', remove } = {}) { Object.assign(this, { start, timeoutMs, profile, remove }); this.child = null; this.opening = null; this.disposed = false; this.uninstalling = false; this.abort = new AbortController() }
   async open() {
     if (this.disposed) throw Error('插件已停止')
+    if (this.closing) throw Error('桌宠正在保存并关闭，请稍后再打开')
     if (this.opening) return this.opening
     const operation = this.child && this.child.exitCode === null ? this.show() : this.spawn()
     this.opening = operation.finally(() => { this.opening = null }); return this.opening
@@ -34,6 +35,7 @@ export class PetHost {
       })
     })
     const result = await this.wait(child, value => value?.type === 'dsh-friend-ready' ? { opened: true, version: value.version, capabilities: value.capabilities } : value?.type === 'dsh-friend-forwarded' ? { forwarded: true } : null)
+    this.forwarded = result.forwarded === true; if (result.version) this.version = result.version
     if (this.disposed) this.stop()
     return result
   }
@@ -41,6 +43,28 @@ export class PetHost {
     const child = this.child, requestId = randomUUID()
     if (!child.connected) return Promise.reject(Error('桌宠还在运行，但控制通道已断开；未新建另一套桌宠'))
     return this.wait(child, value => value?.type === 'dsh-friend-shown' && value.requestId === requestId ? { opened: true, reused: true } : null, callback => child.send({ type: 'dsh-friend-show', requestId }, callback))
+  }
+  status() { return { running: Boolean(this.child?.exitCode === null && !this.forwarded), busy: Boolean(this.opening || this.closing), version: this.version || '' } }
+  async control(action) {
+    if (action !== 'settings') throw Error('未知桌宠控制')
+    const opened = await this.open()
+    if (opened.forwarded) throw Error('桌宠由独立入口启动，请从桌宠右键菜单打开设置或退出。独立启动文件也位于插件安装目录。')
+    const child = this.child, requestId = randomUUID()
+    return this.wait(child, value => value?.type === 'dsh-friend-controlled' && value.requestId === requestId ? { ok: true } : null, callback => child.send({ type: 'dsh-friend-control', action, requestId }, callback))
+  }
+  async close() {
+    if (this.opening) await this.opening
+    if (this.closing) return this.closing
+    const child = this.child
+    if (!child || child.exitCode !== null || this.forwarded) return
+    this.closing = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { child.removeListener('exit', exited); reject(Error('桌宠尚未关闭，未强制终止，请从桌宠退出或检查保存状态。')) }, this.timeoutMs)
+      const exited = () => { clearTimeout(timer); resolve() }
+      child.once('exit', exited)
+      try { child.send({ type: 'dsh-friend-close' }, error => { if (error) { clearTimeout(timer); child.removeListener('exit', exited); reject(Error('关闭请求未送达')) } }) }
+      catch { clearTimeout(timer); child.removeListener('exit', exited); reject(Error('关闭请求未送达')) }
+    }).finally(() => { this.closing = null })
+    return this.closing
   }
   async uninstall() {
     const opened = await this.open()
