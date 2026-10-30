@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('settings', {
   memorySearch: body => ipcRenderer.invoke('friend-settings', 'memory-search', body),
   memoryRead: body => ipcRenderer.invoke('friend-settings', 'memory-read', body),
   memoryFolder: () => ipcRenderer.invoke('friend-settings', 'memory-folder'),
+  manage: (action, body) => ['memory-location', 'backup', 'restore', 'api-probe', 'quiet', 'voice-status', 'voice-save', 'voice-install', 'voice-test', 'voice-stop', 'voice-reference', 'update-check', 'update-notes', 'update-install'].includes(action) ? ipcRenderer.invoke('friend-settings', action, body) : Promise.reject(Error('未知设置操作')),
 })

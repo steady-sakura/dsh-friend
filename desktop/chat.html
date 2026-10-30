@@ -4,7 +4,7 @@
   <header><span class="drag" title="拖动这里，调整与小鲸的距离"><span class="panel-only">小鲸 <small id="view-label">聊天面板</small></span></span><button id="open-chat" class="bubble-only" title="展开聊天记录">聊天</button><button id="switch-view" title="打开聊天面板">面板</button><button id="fold" title="收起聊天">－</button></header>
   <div class="panel-only settings"><div class="tools"><button id="share">共享应用 / 屏幕</button><button id="pause">暂停看</button><button id="stop">结束共享</button><button id="look">看一眼</button><button id="settings">API 设置</button></div><label><input type="checkbox" id="voice">本机语音朗读</label><details><summary>保留一张定格</summary><input id="keep-note" maxlength="2000" placeholder="想留下这张图的原因" aria-label="保存画面的想法"><button id="keep">保存当前定格</button></details></div>
   <p id="status" role="status">正在连接……</p>
-  <p id="last-message" class="bubble-only" aria-live="polite">想说什么，直接写在这里。</p>
+  <div id="last-message" class="bubble-only" tabindex="0" role="log" aria-label="近期聊天，可滚动查看；更早记录可展开聊天" aria-live="polite">想说什么，直接写在这里。</div>
   <div class="history-tools"><button id="history-sessions">历史会话</button><button id="history-current" hidden>返回当前</button><button id="older" hidden>查看更早记录</button></div>
   <div id="session-browser" hidden><div id="session-list"></div><button id="sessions-more" hidden>更多会话</button></div><p id="history-label" hidden></p>
   <div id="history" tabindex="0" aria-label="桌面聊天记录，可上下滚动"><p class="empty">想说什么，直接写在这里。</p></div>

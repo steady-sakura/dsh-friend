@@ -18,3 +18,8 @@ keeps/
 input-receipts-ready.json
 evidence/
 deliveries/
+voice/
+voice.json
+storage.json
+backups/
+*.dshbackup

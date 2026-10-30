@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { launch } from './runtime.mjs'
 
 export class PetHost {
-  constructor({ start = launch, timeoutMs = 20000, profile = '', remove } = {}) { Object.assign(this, { start, timeoutMs, profile, remove }); this.child = null; this.opening = null; this.disposed = false; this.uninstalling = false; this.abort = new AbortController() }
+  constructor({ start = launch, timeoutMs = 20000, profile = '', remove, install } = {}) { Object.assign(this, { start, timeoutMs, profile, remove, install }); this.child = null; this.opening = null; this.disposed = false; this.uninstalling = false; this.updating = false; this.abort = new AbortController() }
   async open() {
     if (this.disposed) throw Error('插件已停止')
+    if (this.updating || this.uninstalling) throw Error('插件正在更新或卸载，请等待完成')
     if (this.closing) throw Error('桌宠正在保存并关闭，请稍后再打开')
     if (this.opening) return this.opening
     const operation = this.child && this.child.exitCode === null ? this.show() : this.spawn()
@@ -26,7 +27,16 @@ export class PetHost {
     child.on('exit', () => { if (this.child === child) this.child = null })
     child.on('error', () => { if (this.child === child) this.child = null })
     child.on('message', message => {
-      if (message?.type === 'dsh-friend-ready' && child.connected) child.send({ type: 'dsh-friend-host', profile: this.profile, canUninstall: Boolean(this.remove) }, () => {})
+      if (message?.type === 'dsh-friend-ready' && child.connected) child.send({ type: 'dsh-friend-host', profile: this.profile, canUninstall: Boolean(this.remove), canUpdate: Boolean(this.install) }, () => {})
+      if (message?.type === 'dsh-friend-update-request') {
+        if (!this.install || this.disposed || this.updating || this.uninstalling || message.approved !== true || !/^[a-f0-9-]{36}$/.test(message.requestId) || !/^github:steady-sakura\/dsh-friend#[a-f0-9]{40}$/.test(message.spec)) return
+        this.updating = true
+        void Promise.resolve().then(() => this.install(message.spec)).catch(() => ({ application: 'failed' })).then(result => {
+          if (child.connected) child.send({ type: 'dsh-friend-update-result', requestId: message.requestId, result: { application: result.application, packageResult: { exitCode: result.packageResult?.exitCode, timedOut: result.packageResult?.timedOut }, error: result.error ? { code: 'host-update-failed' } : undefined } }, () => {})
+          this.updating = false
+        })
+        return
+      }
       if (message?.type !== 'dsh-friend-uninstall-request' || message.approved !== true || !/^[a-f0-9-]{36}$/.test(message.requestId) || !this.remove || this.uninstalling || this.disposed) return
       this.uninstalling = true
       void Promise.resolve().then(() => this.remove()).catch(() => ({ removed: false, code: 'host-error' })).then(result => {
@@ -44,7 +54,7 @@ export class PetHost {
     if (!child.connected) return Promise.reject(Error('桌宠还在运行，但控制通道已断开；未新建另一套桌宠'))
     return this.wait(child, value => value?.type === 'dsh-friend-shown' && value.requestId === requestId ? { opened: true, reused: true } : null, callback => child.send({ type: 'dsh-friend-show', requestId }, callback))
   }
-  status() { return { running: Boolean(this.child?.exitCode === null && !this.forwarded), busy: Boolean(this.opening || this.closing), version: this.version || '' } }
+  status() { return { running: Boolean(this.child?.exitCode === null && !this.forwarded), busy: Boolean(this.opening || this.closing || this.updating || this.uninstalling), version: this.version || '' } }
   async control(action) {
     if (action !== 'settings') throw Error('未知桌宠控制')
     const opened = await this.open()
@@ -76,7 +86,7 @@ export class PetHost {
     this.disposed = true
     // Removing our own bundle disposes this scope before pnpm finishes. Keep the
     // native process alive to receive the result and release files deliberately.
-    if (this.uninstalling) return
+    if (this.uninstalling || this.updating) return
     this.abort.abort()
     if (this.child?.connected) { try { this.child.send({ type: 'dsh-friend-stop', reason: 'host-disabled' }, () => {}) } catch {} }
   }

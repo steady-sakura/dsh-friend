@@ -26,6 +26,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run test:launcher
       - run: npm run test:uninstall
+      - run: npm run test:voice
+      - shell: pwsh
+        run: |
+          $env:DSH_FRIEND_VOICE_TEST_MODEL = Get-Content .local/voice-test-model-path.txt -Raw
+          npm run test:desktop

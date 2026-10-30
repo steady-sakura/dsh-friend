@@ -1,6 +1,6 @@
 import { parseReply } from './api.mjs'
 
-export function visibleReply(content) {
+export function visibleReply(content, catalog = []) {
   const text = typeof content === 'string' ? content : ''
   if (text.length > 128000) throw Error('模型正文过长，未作为完整回复发送')
   if (!text.trim() || text.trim() === '[不回复]') return { say: '', actions: [] }
@@ -14,6 +14,13 @@ export function visibleReply(content) {
       if (Array.isArray(messages) && messages.every(t => typeof t === 'string')) return { say: messages.join('\n\n'), messages, actions: [] }
     }
   } catch {}
+  const tail = text.match(/\n\s*\n(\[\s*"a-[a-f0-9]{12}"(?:\s*,\s*"a-[a-f0-9]{12}"){0,2}\s*\])\s*$/)
+  // Only conceal a bare allowlisted tail after ordinary prose. Never execute it,
+  // and preserve the untouched provider text in the delivery receipt.
+  if (tail && !text.includes('```') && !/(?:编号|动作ID|动作编号|数组|JSON|json|代码|示例|参数|协议)/.test(text.slice(0, tail.index))) {
+    const ids = JSON.parse(tail[1]), allowed = new Set(catalog.map(a => a.id))
+    if (ids.every(id => allowed.has(id))) return { say: text.slice(0, tail.index).trimEnd(), actions: [], controlIssue: '模型把动作编号混入正文，已隐藏尾部编号；该尾部未作为动作执行。' }
+  }
   return { say: text, actions: [] }
 }
 export function controlTool({ catalog, recall, image }) {

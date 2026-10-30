@@ -8,6 +8,7 @@ const dirs = ['chats', 'sessions', 'memory', 'keeps', 'Cache', 'Code Cache', 'GP
 const files = ['settings.json', 'preferences.json', 'credentials.json', 'imports.json', 'input-receipts.jsonl', 'input-receipts-ready.json', 'Local State', 'Preferences', 'DIPS', 'DIPS-wal', 'DIPS-shm', 'Visited Links', 'TransportSecurity', 'Network Persistent State', 'First Run', 'lockfile', 'chrome_debug.log', 'DevToolsActivePort', 'SingletonLock', 'SingletonCookie', 'SingletonSocket']
 const managed = new Set([...dirs, ...files])
 managed.add('deliveries')
+for (const name of ['voice', 'voice.json', 'storage.json', 'backups']) managed.add(name)
 const isManaged = name => managed.has(name) || /^(?:settings|preferences|credentials|imports|input-receipts-ready)\.json\.[a-f0-9-]{36}\.tmp$/.test(name)
 const key = path => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)
 const within = (base, path) => key(path) === key(base) || key(path).startsWith(key(base) + sep)
@@ -65,7 +66,8 @@ export async function makeCleanupPlan(root, { packageRoot, owner } = {}) {
   const marker = await ownerAt(root)
   if (!owner?.owned || marker?.app !== 'dsh-friend' || marker.id !== owner.id) throw Error('未能确认数据归属，资料会保留')
   const imports = await json(join(root, 'imports.json'), {}), protectedRoots = []
-  for (const path of [imports.role, imports.memory]) if (typeof path === 'string' && path.trim()) {
+  const storage = await json(join(root, 'storage.json'), {})
+  for (const path of [imports.role, imports.memory, storage.memoryPath && key(storage.memoryPath) !== key(join(root, 'memory')) ? storage.memoryPath : null]) if (typeof path === 'string' && path.trim()) {
     protectedRoots.push(resolve(path)); try { protectedRoots.push(await realpath(path)) } catch { /* preserve lexical path even if detached */ }
   }
   const info = await lstat(root), targets = [], protectedEntries = []
@@ -87,7 +89,8 @@ export async function deleteOwnedData(plan, { confirmed = false, packageRemoved 
     try { await lstat(join(root, name)); throw Error('目录现在包含项目文件，未继续清理') } catch (error) { if (error.code !== 'ENOENT') throw error }
   }
   const currentImports = await json(join(root, 'imports.json'), {}), protectedRoots = [...plan.protectedRoots]
-  for (const path of [currentImports.role, currentImports.memory]) if (typeof path === 'string' && path.trim()) {
+  const storage = await json(join(root, 'storage.json'), {})
+  for (const path of [currentImports.role, currentImports.memory, storage.memoryPath && key(storage.memoryPath) !== key(join(root, 'memory')) ? storage.memoryPath : null]) if (typeof path === 'string' && path.trim()) {
     protectedRoots.push(resolve(path)); try { protectedRoots.push(await realpath(path)) } catch {}
   }
   let removed = 0

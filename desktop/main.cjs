@@ -4,16 +4,16 @@ const { pathToFileURL } = require('node:url')
 const { PetMovement } = require('./movement.cjs')
 const { createChatWindow } = require('./chat-window.cjs')
 const { actions } = require('./actions.cjs')
-const { LocalSpeech } = require('./speech.cjs')
 const { CaptureConsent, capturePermission } = require('./consent.cjs')
 const { randomUUID } = require('node:crypto')
 
 async function start() {
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
   const hidden = process.argv.includes('--hidden'), smoke = process.argv.includes('--smoke')
   app.setName('dsh-friend')
   const sendParent = message => { if (process.connected) { try { process.send(message, () => {}) } catch {} } }
   const version = require('../package.json').version
-  const capabilities = { picker: 4, bubble: 2, drafts: 1, history: 1, movement: 2, capture: 2, memory: 1, uninstall: 1, plainReply: 1, delivery: 1 }
+  const capabilities = { picker: 4, bubble: 3, drafts: 1, history: 1, movement: 2, capture: 2, memory: 2, uninstall: 1, plainReply: 2, delivery: 1, updates: 1, voice: 1, backup: 1 }
   // Personal state never lives in the installed plugin or working repository.
   const dataDir = process.env.DSH_FRIEND_DATA_DIR || join(app.getPath('appData'), 'dsh-friend')
   const { ensureDataOwner, makeCleanupPlan } = await import('../src/uninstall-data.mjs')
@@ -31,13 +31,21 @@ async function start() {
   const vault = new Vault(store, safeStorage); await vault.init()
   const api = new API()
   let closing = false, settingsWindow, captureWindow, captureConsent, captureRequest, captureOpening, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set(), hostInfo = null, parentRemoval = null
-  let preference = await store.read('preferences.json', { voice: false })
-  const save = patch => { Object.assign(preference, patch); return store.write('preferences.json', preference) }
+  let preference = await store.read('preferences.json', { voice: false }), restoring = false
+  const save = patch => { if (restoring) return Promise.reject(Error('资料恢复已开始，请关闭桌宠后重新打开')); Object.assign(preference, patch); return store.write('preferences.json', preference) }
   const { ChatDraft } = await import('../src/drafts.mjs'); const drafts = new ChatDraft({ initial: preference.chatDraft, save })
   const { ChatArchive } = await import('../src/chat-archive.mjs'); const archive = new ChatArchive(store)
   const { Imports } = await import('../src/imports.mjs'); const imports = new Imports(store); await imports.init()
-  const { Recall } = await import('../src/recall.mjs'); const recall = new Recall({ store, imports }); await recall.init()
+  const { MemoryLocation } = await import('../src/memory-location.mjs'); const memoryLocation = new MemoryLocation(store)
+  const { Recall } = await import('../src/recall.mjs'); let recall
+  try { await memoryLocation.init(); recall = new Recall({ store, imports, memoryRoot: memoryLocation.root }); await recall.init() }
+  catch {
+    const issue = '记忆目录暂不可用或归属未确认，请到记忆设置选择可用位置；原目录未改写。'
+    const unavailable = async () => { throw Error(issue) }
+    recall = { jobs: Promise.resolve(), lastWrites: [], refresh: unavailable, record: unavailable, status: () => ({ sources: 0, counts: {}, warnings: [issue] }) }
+  }
   const engine = new Companion({ store, vault, api, catalog: actions, imports, recall }); await engine.init()
+  engine.quietUntil = Number(preference.quietUntil) || 0
   const protect = (window, capture = false) => {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', event => event.preventDefault())
@@ -54,7 +62,20 @@ async function start() {
   const notice = message => emit('notice', { message })
   const mover = new PetMovement({ window: pet, screen, save: position => void save({ position }).catch(() => {}), bounce: amount => emit('squash', { amount }), report: () => notice('这次拖甩已停止，位置保留，可以重新拖动。') })
   if (Number.isFinite(preference.position?.x) && Number.isFinite(preference.position?.y)) mover.move(preference.position)
-  const speech = new LocalSpeech({ report: message => { speechIssue = message } }); speech.setEnabled(preference.voice === true)
+  const { Voice } = await import('../src/voice.mjs')
+  const speech = new Voice({ store, report: message => { speechIssue = message }, play: value => { if (!chat.window.isDestroyed()) chat.window.webContents.send('friend-pet-action', { action: 'audio', ...value }) }, stopPlayback: () => { if (!chat.window.isDestroyed()) chat.window.webContents.send('friend-pet-action', { action: 'audio-stop' }) } }); await speech.init(); speech.setEnabled(preference.voice === true)
+  const { Updates } = await import('../src/updates.mjs'); let pendingUpdate = null
+  const updates = new Updates({ current: version, install: spec => new Promise((resolve, reject) => {
+    if (!hostInfo?.canUpdate || !process.connected) return reject(Error('请从 DSH 打开桌宠后更新'))
+    const requestId = randomUUID(), timer = setTimeout(() => { pendingUpdate = null; engine.closed = true; reject(Error('更新结果暂未确认，请在 DSH 插件管理器核对；桌宠停止接话，未自动重试')) }, 600000)
+    pendingUpdate = { requestId, done: result => { clearTimeout(timer); pendingUpdate = null; resolve(result) } }; sendParent({ type: 'dsh-friend-update-request', approved: true, requestId, spec })
+  }) })
+  const settingsState = async () => ({ ...engine.publicConfig(), dataDir, memoryPath: memoryLocation.root, imports: imports.status(), memory: recall.status(), voiceSettings: await speech.status(), canUpdate: hostInfo?.canUpdate === true, desktop: { version, capabilities } })
+  const maintain = async fn => {
+    if (engine.working || engine.pending.length || engine.admitting.size || engine.maintenance) throw Error('请等当前聊天处理完成再操作')
+    engine.maintenance = true; engine.cancel(); speech.stop(); mover.stop()
+    try { await store.writes; await recall.jobs; return await fn() } finally { engine.maintenance = false }
+  }
   const state = () => {
     const value = engine.state()
     for (const row of value.chat.history) if (hydrated && row.role === 'assistant' && !seen.has(row.id)) {
@@ -65,7 +86,8 @@ async function start() {
   }
   const openSettings = async () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return }
-    settingsWindow = new BrowserWindow({ width: 670, height: 820, minWidth: 550, minHeight: 600, show: false, title: 'DSH Friend · API 与偏好', backgroundColor: '#f4f9fc', webPreferences: web('settings-preload.cjs') })
+    const work = screen.getDisplayMatching(pet.getBounds()).workArea
+    settingsWindow = new BrowserWindow({ width: Math.min(900, work.width), height: Math.min(860, work.height), minWidth: Math.min(640, work.width), minHeight: Math.min(580, work.height), show: false, title: 'DSH Friend · 陪伴设置', backgroundColor: '#f4f9fc', webPreferences: web('settings-preload.cjs') })
     protect(settingsWindow); await settingsWindow.loadFile(join(__dirname, 'settings.html')); if (!hidden) settingsWindow.show()
   }
   const stopCapture = () => { engine.stopCapture(); captureConsent?.clear(); captureRequest = null }
@@ -93,9 +115,44 @@ async function start() {
   }
   ipcMain.handle('friend-settings', async (event, action, body = {}) => {
     if (!trusted(event, settingsWindow, 'settings.html')) throw Error('设置入口无效')
-    if (action === 'uninstall') return requestUninstall()
     if (closing) throw Error('正在关闭或卸载，请等待完成')
-    if (action === 'read') return { ...engine.publicConfig(), dataDir, imports: imports.status(), memory: recall.status(), desktop: { version, capabilities } }
+    if (engine.closed && !['read', 'voice-status', 'voice-stop', 'folder', 'memory-folder'].includes(action)) throw Error('本次桌宠已结束接话；更新或恢复资料后，请关闭并重新打开桌宠')
+    if (action === 'uninstall') return requestUninstall()
+    if (action === 'read') return settingsState()
+    if (engine.maintenance && action !== 'voice-status') throw Error('正在处理资料或更新，请等待完成')
+    if (action === 'api-probe') return api.probe({ config: engine.config, key: vault.keys.apiKey })
+    if (action === 'quiet') { const minutes = Number(body.minutes); if (![0, 30, 60, 120].includes(minutes)) throw Error('安静时长无效'); await save({ quietUntil: minutes ? Date.now() + minutes * 60000 : 0 }); engine.quietUntil = preference.quietUntil; return { message: minutes ? '已暂停主动聊天和自动分析 ' + minutes + ' 分钟。' : '已恢复原来的主动活动设置。' } }
+    if (action === 'voice-status') return speech.status()
+    if (action === 'voice-save') { speechIssue = ''; return speech.configure(body) }
+    if (action === 'voice-install') { await speech.install(); return speech.status() }
+    if (action === 'voice-stop') { speech.stop(); return {} }
+    if (action === 'voice-test') { speechIssue = ''; void speech.speak('你好，我在这里。今天想聊点什么？', { preview: true }); return {} }
+    if (action === 'voice-reference') {
+      const result = await dialog.showOpenDialog(settingsWindow, { title: '选择 3–30 秒参考音频（16 位 PCM WAV）', filters: [{ name: 'WAV 音频', extensions: ['wav'] }], properties: ['openFile'] })
+      if (!result.canceled) await speech.reference(result.filePaths[0]); return speech.status()
+    }
+    if (action === 'memory-location') {
+      const result = await dialog.showOpenDialog(settingsWindow, { title: '选择空文件夹或 DSH Friend 记忆目录', properties: ['openDirectory', 'createDirectory'] }); if (result.canceled) return settingsState()
+      const choice = await dialog.showMessageBox(settingsWindow, { type: 'question', message: '如何使用这个记忆目录？', detail: '复制不会删除原目录；有同名冲突会停止。外部自选目录卸载时保留。', buttons: ['取消', '复制现有记忆并切换', '使用目标已有记忆'], defaultId: 0, cancelId: 0, noLink: true }); if (!choice.response) return settingsState()
+      await maintain(async () => { const prior = memoryLocation.root; try { await memoryLocation.select(result.filePaths[0], { copy: choice.response === 1 }); const next = new Recall({ store, imports, memoryRoot: memoryLocation.root }); await next.init(); recall = next; engine.recall = next } catch (error) { memoryLocation.root = prior; await store.write('storage.json', { memoryPath: prior }); throw error } }); return settingsState()
+    }
+    if (action === 'backup') {
+      const result = await dialog.showSaveDialog(settingsWindow, { title: '导出本机资料备份', defaultPath: 'dsh-friend-' + Date.now() + '.dshbackup', filters: [{ name: 'DSH Friend 备份', extensions: ['dshbackup'] }] }); if (result.canceled) return { cancelled: true }
+      return maintain(async () => { const { backupData } = await import('../src/backup.mjs'); await require('node:fs/promises').writeFile(result.filePath, await backupData(store, memoryLocation.root), { flag: 'wx', mode: 0o600 }); return { saved: true } })
+    }
+    if (action === 'restore') {
+      const result = await dialog.showOpenDialog(settingsWindow, { title: '选择本机备份', filters: [{ name: 'DSH Friend 备份', extensions: ['dshbackup'] }], properties: ['openFile'] }); if (result.canceled) return { cancelled: true }
+      const choice = await dialog.showMessageBox(settingsWindow, { type: 'warning', message: '恢复备份中的同名资料？', detail: '会先保存当前资料到本机 backups 目录，再恢复同名文件；其他文件保留。记忆写入当前选择的位置。恢复后请关闭桌宠重新打开，当前共享会结束。', buttons: ['取消', '备份当前资料并恢复'], defaultId: 0, cancelId: 0, noLink: true }); if (choice.response !== 1) return { cancelled: true }
+      return maintain(async () => { engine.stopCapture(); const { restoreData } = await import('../src/backup.mjs'); const info = await require('node:fs/promises').lstat(result.filePaths[0]); if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024) throw Error('请选择不超过 256 MiB 的普通备份文件'); const bytes = await require('node:fs/promises').readFile(result.filePaths[0]); engine.closed = true; restoring = true; return restoreData(store, memoryLocation.root, bytes) })
+    }
+    if (action === 'update-check') { const result = await updates.check(); return { ...result, canInstall: hostInfo?.canUpdate === true } }
+    if (action === 'update-notes') { if (!updates.checked) throw Error('请先检查更新'); await shell.openExternal(updates.checked.notes); return {} }
+    if (action === 'update-install') {
+      if (!hostInfo?.canUpdate) throw Error('请从 DSH 打开桌宠后更新；独立启动入口不能修改宿主插件')
+      if (!updates.checked?.ready) throw Error('请先检查更新并等待 CI 通过')
+      const choice = await dialog.showMessageBox(settingsWindow, { type: 'question', message: '更新到 ' + updates.checked.version + '？', detail: '提交 ' + updates.checked.sha.slice(0, 12) + ' 已通过 CI。将结束共享并停止当前桌宠接话，个人资料保留。安装后从 DSH 正常重新打开；宿主要求重启时会明确提示。', buttons: ['取消', '安装此更新'], defaultId: 0, cancelId: 0, noLink: true }); if (choice.response !== 1) return { cancelled: true }
+      return maintain(async () => { engine.stopCapture(); const result = await updates.apply(); await dialog.showMessageBox(settingsWindow, { type: 'info', message: '更新包已安装。', detail: result.restartRequired ? '宿主要求重启，请按 DSH 提示正常重启后打开桌宠。不会自动重启 Web。' : '关闭此桌宠，再从 DSH 打开以加载新版本。', buttons: ['知道了'] }); engine.closed = true; return result })
+    }
     if (action === 'choose') {
       if (!['role', 'memory'].includes(body.kind)) throw Error('请选择角色或记忆')
       const result = await dialog.showOpenDialog(settingsWindow, { title: body.kind === 'role' ? '选择角色提示词文件夹' : '选择记忆文件夹', properties: ['openDirectory'] })
@@ -104,11 +161,11 @@ async function start() {
     }
     if (action === 'clear') { engine.cancel(); const status = await imports.set(body.kind, ''); await recall.refresh(); return status }
     if (action === 'refresh') { engine.cancel(); const status = await imports.refresh(); await recall.refresh(); return status }
-    if (action === 'save') { const result = await engine.saveConfig(body); return { ...result, dataDir, imports: imports.status(), memory: recall.status() } }
+    if (action === 'save') { await engine.saveConfig(body); return settingsState() }
     if (action === 'memory-status') { await recall.refresh(); return recall.status() }
     if (action === 'memory-search') { await recall.refresh(); return recall.search(body.query, { offset: body.offset, limit: 8 }) }
     if (action === 'memory-read') { await recall.refresh(); return recall.read(body.sourceId, body) }
-    if (action === 'memory-folder') { const error = await shell.openPath(join(dataDir, 'memory')); if (error) throw Error('无法打开记忆目录'); return {} }
+    if (action === 'memory-folder') { const error = await shell.openPath(memoryLocation.root); if (error) throw Error('无法打开记忆目录'); return {} }
     if (action === 'folder') { const error = await shell.openPath(dataDir); if (error) throw Error('无法打开数据目录'); return {} }
     if (action === 'test') {
       if (engine.working) throw Error('请等当前请求完成后测试')
@@ -143,7 +200,7 @@ async function start() {
   const quiesce = async () => {
     closing = true
     try { await drafts.writes } catch { closing = false; throw Error('草稿尚未保存成功，窗口已保留，请先复制文字或重试。') }
-    clearInterval(timer); globalShortcut.unregisterAll(); speech.setEnabled(false); mover.stop(); stopCapture()
+    clearInterval(timer); globalShortcut.unregisterAll(); speech.installController?.abort(); speech.setEnabled(false); mover.stop(); stopCapture()
     await engine.close()
     // Let the canceled request finish its local bookkeeping before exiting.
     const deadline = Date.now() + 2000
@@ -193,6 +250,9 @@ async function start() {
     if (closing) throw Error('桌宠正在关闭')
     if (!petSender && ['catalog', 'action-ack', 'interact', 'pointer', 'expand', 'drag-start', 'drag-end', 'menu', 'close'].includes(action)) throw Error('仅供桌宠身体使用')
     if (action === 'state') return state()
+    if (engine.maintenance && !['catalog', 'history', 'sessions', 'delivery-read', 'deliveries', 'voice-ended', 'voice-stop'].includes(action)) throw Error('正在处理资料或更新，请稍后再操作')
+    if (action === 'voice-ended' && chatSender) { if (body.failed) speechIssue = '声音播放失败，请检查本机音频输出；文字仍保留。'; speech.ended(body.failed === true); return {} }
+    if (action === 'voice-stop' && chatSender) { speech.stop(); return {} }
     if (['deliveries', 'delivery-read', 'delivery-dismiss', 'delivery-verify'].includes(action)) {
       if (!chatSender) throw Error('回执仅供聊天窗口查看')
       if (action === 'deliveries') return engine.deliveries.list(body)
@@ -209,6 +269,7 @@ async function start() {
     if (action === 'look-frame') { const frame = engine.frames.info(engine.frames.frames.at(-1)); if (!frame) throw Error('没有可用的新采样，未换用其他画面'); return engine.observe({ ...frame, force: true }) }
     if (action === 'action-ack') { engine.ack(body.id, body.status); return {} }
     if (action === 'input') {
+      speech.stop()
       const admission = await engine.input(body)
       if (admission?.duplicate) notice('这条消息已保存，未重复调用 API；可到历史记录查看。')
       try { await drafts.clearMatching(body) } catch { notice('消息已保存，但草稿清理失败；不会自动重发。') }
@@ -271,7 +332,8 @@ async function start() {
       const action = message.action === 'settings' ? openSettings : null
       if (action) void Promise.resolve().then(action).then(() => sendParent({ type: 'dsh-friend-controlled', requestId: message.requestId }), () => {})
     }
-    if (message?.type === 'dsh-friend-host' && typeof message.profile === 'string') hostInfo = { profile: message.profile.slice(0, 200), canUninstall: message.canUninstall === true }
+    if (message?.type === 'dsh-friend-host' && typeof message.profile === 'string') hostInfo = { profile: message.profile.slice(0, 200), canUninstall: message.canUninstall === true, canUpdate: message.canUpdate === true }
+    if (message?.type === 'dsh-friend-update-result' && message.requestId === pendingUpdate?.requestId) pendingUpdate.done(message.result)
     if (message?.type === 'dsh-friend-uninstall-result' && message.requestId === parentRemoval?.requestId) parentRemoval.done({ removed: message.removed === true, code: typeof message.code === 'string' ? message.code : 'host-error' })
     if (message?.type === 'dsh-friend-uninstall-prompt' && /^[a-f0-9-]{36}$/.test(message.requestId)) {
       sendParent({ type: 'dsh-friend-uninstall-prompted', requestId: message.requestId })
@@ -280,7 +342,7 @@ async function start() {
     if (message?.type === 'dsh-friend-stop') void close({ reason: message.reason || 'host-disabled' })
     if (message?.type === 'dsh-friend-show' && /^[a-f0-9-]{36}$/.test(message.requestId)) void showPet().then(() => sendParent({ type: 'dsh-friend-shown', requestId: message.requestId }), () => {})
   })
-  process.on('disconnect', () => parentRemoval?.done({ removed: false, code: 'host-disconnected' }))
+  process.on('disconnect', () => { parentRemoval?.done({ removed: false, code: 'host-disconnected' }); if (pendingUpdate) { engine.closed = true; pendingUpdate.done({ application: 'failed' }) } })
   process.on('SIGTERM', () => { void close({ reason: 'system-signal' }) }); process.on('SIGINT', () => { void close({ reason: 'system-signal' }) })
   await pet.loadFile(join(__dirname, 'index.html')); await chat.load()
   if (!hidden) pet.showInactive()
@@ -290,7 +352,7 @@ async function start() {
   sendParent({ type: 'dsh-friend-ready', version, capabilities })
   if (smoke) {
     if (process.env.DSH_FRIEND_UNINSTALL_TEST === '1') { await require('../scripts/electron-uninstall-smoke.cjs').run({ pet, chat, settingsWindow, engine, getClosing: () => closing, getHost: () => hostInfo }); return }
-    if (process.env.DSH_FRIEND_INTEGRATION === '1') await require('../scripts/electron-smoke.cjs').run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture: () => captureWindow })
+    if (process.env.DSH_FRIEND_INTEGRATION === '1') await require('../scripts/electron-smoke.cjs').run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture: () => captureWindow, speech, updates, memoryLocation })
     const report = { pet: await pet.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("pet"))'), chat: await chat.window.webContents.executeJavaScript('Boolean(window.friend && document.getElementById("input"))'), settings: settingsWindow ? await settingsWindow.webContents.executeJavaScript('Boolean(window.settings && document.getElementById("apiKey"))') : true, actions: actions.length, isolated: pet.webContents.getLastWebPreferences().contextIsolation }
     if (process.env.DSH_FRIEND_EVIDENCE_DIR) {
       const fs = require('node:fs/promises'); await fs.mkdir(process.env.DSH_FRIEND_EVIDENCE_DIR, { recursive: true })

@@ -5,8 +5,8 @@ const problem = error => { $('status').textContent = String(error?.message || er
 const flow = new FriendCaptureFlow.Flow({
   rpc: window.capture,
   getMedia: () => navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false }),
-  attach: async stream => { $('preview').srcObject = stream; lastVideoFrames = -1; staleSince = 0; await $('preview').play() },
-  detach: () => { $('preview').srcObject = null },
+  attach: async stream => { $('preview').srcObject = stream; $('preview').hidden = false; $('preview-empty').hidden = true; lastVideoFrames = -1; staleSince = 0; await $('preview').play() },
+  detach: () => { $('preview').srcObject = null; $('preview').hidden = true; $('preview-empty').hidden = false },
   report: problem,
   sample: async () => {
     const video = $('preview'); if (!video.videoWidth || !video.videoHeight) return null
@@ -25,17 +25,18 @@ const flow = new FriendCaptureFlow.Flow({
 })
 async function list() {
   const version = ++listVersion; await flow.cancelOpening()
-  chosen = null; $('consent').checked = false; $('full').checked = false; $('full-row').hidden = $('type').value !== 'screen'; $('sources').replaceChildren(); problem('正在读取来源名称……')
+  chosen = null; $('consent').checked = false; $('full').checked = false; $('full-row').hidden = $('type').value !== 'screen'; $('sources').replaceChildren(); $('sources').setAttribute('aria-busy', 'true'); problem('正在读取来源名称……')
   try {
     const rows = await window.capture.sources({ type: $('type').value })
     if (version !== listVersion) return
     for (const row of rows) {
-      const button = document.createElement('button'); button.textContent = row.name
-      button.onclick = () => { chosen = { ...row }; for (const item of $('sources').children) item.classList.toggle('selected', item === button) }
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = row.name; button.setAttribute('aria-pressed', 'false')
+      button.onclick = () => { chosen = { ...row }; for (const item of $('sources').children) { item.classList.toggle('selected', item === button); item.setAttribute('aria-pressed', item === button ? 'true' : 'false') } }
       $('sources').append(button)
     }
     problem(rows.length ? '选择一个来源再确认开始；刷新列表不会更换已有共享。' : '没有找到来源，恢复最小化窗口后可以刷新。')
   } catch (error) { if (version === listVersion) problem(error) }
+  finally { if (version === listVersion) $('sources').setAttribute('aria-busy', 'false') }
 }
 $('type').onchange = () => { void list().catch(problem) }; $('refresh').onclick = () => { void list().catch(problem) }
 $('stop').onclick = () => { void flow.stop().then(() => problem('共享已结束。')).catch(problem) }

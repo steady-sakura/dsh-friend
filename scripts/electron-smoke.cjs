@@ -5,7 +5,7 @@ const { writeFile, mkdir, readFile } = require('node:fs/promises')
 const { randomUUID } = require('node:crypto')
 const assert = require('node:assert/strict')
 const waitFor = async (fn, label) => { for (let i = 0; i < 200; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 50)) }; throw Error('Smoke timeout: ' + label) }
-async function run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture }) {
+async function run({ engine, store, pet, chat, settingsWindow, openCapture, getCapture, speech, updates, memoryLocation }) {
   let calls = [], fixture
   const server = createServer(async (req, res) => {
     let content = ''; for await (const chunk of req) content += chunk
@@ -24,6 +24,7 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
   await new Promise(r => server.listen(0, '127.0.0.1', r))
   const address = 'http://127.0.0.1:' + server.address().port
   try {
+    await waitFor(() => settingsWindow.webContents.executeJavaScript('document.getElementById("form").inert === false'), 'settings loaded before editing')
     // Only a mock key and localhost endpoint are used; no existing provider settings are loaded.
     await settingsWindow.webContents.executeJavaScript(`(() => {
       document.getElementById('baseURL').value = '${address}';
@@ -62,7 +63,7 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     await chat.window.webContents.executeJavaScript('document.getElementById("input").value = "我喜欢星河饼干。"; document.getElementById("form").requestSubmit()', true)
     await waitFor(() => !engine.working && engine.recall.facts.length > 0, 'sourced long-term memory saved')
     assert(calls.at(-1).messages.some(message => typeof message.content === 'string' && message.content.includes('喜欢看流星')))
-    await settingsWindow.webContents.executeJavaScript('document.getElementById("memory-query").value = "星河饼干"; document.getElementById("memory-search").click()', true)
+    await settingsWindow.webContents.executeJavaScript('document.querySelector("[data-section=memory]").click(); document.getElementById("memory-query").value = "星河饼干"; document.getElementById("memory-search").click()', true)
     await waitFor(() => settingsWindow.webContents.executeJavaScript('document.querySelectorAll(".memory-hit").length > 0'), 'memory search UI')
     await settingsWindow.webContents.executeJavaScript('document.querySelector(".memory-hit button").click()', true)
     await waitFor(() => settingsWindow.webContents.executeJavaScript('document.getElementById("memory-original").textContent.includes("星河饼干")'), 'original source viewer')
@@ -95,6 +96,7 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     fixture.showInactive()
     await capture.webContents.executeJavaScript('document.getElementById("refresh").click()', true)
     await waitFor(() => capture.webContents.executeJavaScript('[...document.querySelectorAll("#sources button")].some(b => b.textContent === "DSH Friend Test Fixture")'), 'fixture listed')
+    assert(await capture.webContents.executeJavaScript('[...document.querySelectorAll("#sources button")].every(button=>button.scrollHeight<=button.clientHeight+1)'), 'source titles must not overlap the next button')
     await capture.webContents.executeJavaScript(`(() => { [...document.querySelectorAll('#sources button')].find(b => b.textContent === 'DSH Friend Test Fixture').click(); document.getElementById('consent').checked = true; document.getElementById('start').click() })()`, true)
     await waitFor(() => engine.capture.active, 'capture explicit source')
     await waitFor(() => calls.some(body => Array.isArray(body.messages.at(-1).content)), 'vision request')
@@ -129,7 +131,70 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       await settingsWindow.webContents.executeJavaScript('document.getElementById("role-import").scrollIntoView()')
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'imports.png'), (await settingsWindow.webContents.capturePage()).toPNG())
     }
-    console.log('INTEGRATION_OK: multi-reply preview, drafts, history without replay, capture isolation, exact keeps, memory consent, legacy and native plain replies, truncated originals, receipt viewer and dismissal without API replay.')
+    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=false', true)
+    await chat.show('bubble', true, { expanded: false })
+    for (let i = 0; i < 8; i++) await engine.add('assistant', '独立合成回复 ' + i + '。'.repeat(150), { replyGroup: randomUUID() })
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".compact-group").length>8 && document.getElementById("last-message").scrollHeight>document.getElementById("last-message").clientHeight'), 'compact history is scrollable')
+    assert(chat.window.getBounds().height <= 360)
+    await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop=0', true)
+    await engine.add('assistant', '最新合成短句', { replyGroup: randomUUID() })
+    await new Promise(r => setTimeout(r, 1200)); assert.equal(await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop'), 0)
+    await settingsWindow.webContents.executeJavaScript('document.querySelector("[data-section=voice]").click(); document.getElementById("voice-install").scrollIntoView({block:"start"})', true)
+    assert(await settingsWindow.webContents.executeJavaScript('(()=>{const main=document.getElementById("settings-main").getBoundingClientRect(),brand=document.querySelector(".settings-brand").getBoundingClientRect();return main.top>=0&&main.bottom<=innerHeight+1&&brand.top>=0})()'))
+    await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'voice-settings.png'), (await settingsWindow.webContents.capturePage()).toPNG())
+    await settingsWindow.webContents.executeJavaScript('document.querySelector("[data-section=maintenance]").click(); document.getElementById("update-check").scrollIntoView({block:"center"})', true)
+    await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'update-settings.png'), (await settingsWindow.webContents.capturePage()).toPNG())
+    if (process.env.DSH_FRIEND_VOICE_TEST_MODEL) {
+      const { cp } = require('node:fs/promises'); await mkdir(join(speech.root, 'models'), { recursive: true }); await cp(process.env.DSH_FRIEND_VOICE_TEST_MODEL, speech.modelRoot, { recursive: true, errorOnExist: true, force: false })
+      chat.window.webContents.setAudioMuted(true)
+      await speech.speak('你好，这是小鲸的本机合成试听。', { preview: true })
+      assert.equal(speech.lastError, ''); assert(speech.played > 0)
+      assert.equal(engine.state().chat.history.at(-1).text, '最新合成短句')
+    }
+    await verifySettingsUI(settingsWindow)
+    const { dialog } = require('electron'), originalDialog = dialog.showMessageBox, originalOpen = dialog.showOpenDialog, originalSave = dialog.showSaveDialog
+    const target = join(store.dir, 'synthetic-custom-memory'); await mkdir(target)
+    try {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] })
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: join(store.dir, 'synthetic-export.dshbackup') })
+      dialog.showMessageBox = async () => ({ response: 1 })
+      await settingsWindow.webContents.executeJavaScript('document.querySelector("[data-section=memory]").click(); document.getElementById("memory-location").click()', true)
+      await waitFor(() => memoryLocation.root === target && !engine.maintenance, 'custom memory copied and switched through real settings IPC')
+      assert((await readFile(join(store.dir, 'memory', 'facts.json'), 'utf8')).includes('星河饼干'))
+      assert((await readFile(join(target, 'facts.json'), 'utf8')).includes('星河饼干'))
+      const exported = await settingsWindow.webContents.executeJavaScript('window.settings.manage("backup")', true); assert(exported.saved)
+      const { decodeBackup } = await import('../src/backup.mjs'); assert(decodeBackup(await readFile(join(store.dir, 'synthetic-export.dshbackup'))).some(row => row.name === 'memory/facts.json'))
+      updates.fetch = async url => new Response(JSON.stringify(url.includes('/commits/') ? { sha: 'c'.repeat(40) } : url.endsWith('package.json') ? { name: 'dsh-friend', version: '0.7.1' } : { workflow_runs: [{ name: 'Check plugin', event: 'push', head_branch: 'main', head_sha: 'c'.repeat(40), conclusion: 'success' }] }))
+      const checked = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-check")', true); assert(checked.ready)
+      const installed = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-install")', true); assert(installed.updated); assert(installed.restartRequired)
+    } finally { dialog.showMessageBox = originalDialog; dialog.showOpenDialog = originalOpen; dialog.showSaveDialog = originalSave }
+    console.log('INTEGRATION_OK: sidebar settings, bounded scrollable compact history without scroll theft, voicePlayback=' + Boolean(process.env.DSH_FRIEND_VOICE_TEST_MODEL) + ', custom memory migration, backup, confirmed update IPC with synthetic host, capture isolation, exact keeps, native replies and receipts.')
   } finally { fixture?.destroy(); server.closeAllConnections(); server.close() }
 }
 module.exports = { run }
+async function verifySettingsUI(window) {
+  const originalBounds = window.getBounds(), originalMin = window.getMinimumSize(), checks = []
+  const js = text => window.webContents.executeJavaScript(text, true)
+  await js('window.settings.read().then(value => {window.__friendUIOriginal = value})')
+  try {
+    // Invalid controls in another category must become visible and focused.
+    await js('render(window.__friendUIOriginal);window.friendSettingsNavigation.show("memory");document.getElementById("name").value="";document.getElementById("form").requestSubmit()')
+    assert.equal(await js('window.friendSettingsNavigation.current'), 'companion'); assert.equal(await js('document.activeElement.id'), 'name')
+    window.setMinimumSize(0, 0)
+    for (const count of [0, 1, 1000]) {
+      await js(`(()=>{const value=structuredClone(window.__friendUIOriginal);value.name='👩🏽‍💻 演示伙伴与Aleksandra Wiśniewska-Kowalczyk '.repeat(20).slice(0,500);value.dataDir='E:/CompanionNotes/旅行与日常记录/长期记忆与偏好修订/'.repeat(8);value.memoryPath=value.dataDir+'自选目录';value.imports.memory={path:value.dataDir,files:Array.from({length:${count}},(_,i)=>'journal/2026-10-30-陪伴记录与修订版本-'+i+'.md'),chars:${count}*1200};value.memory={sources:${count},counts:{journal:${count},fact:${count}?18:0},warnings:[]};render(value)})()`)
+      for (const width of [320, 640, 900]) {
+        window.setContentSize(width, 780)
+        for (const category of ['connection', 'voice', 'memory', 'maintenance']) {
+          await js(`window.friendSettingsNavigation.show('${category}')`); await new Promise(resolve => setTimeout(resolve, 30))
+          const box = await js('(()=>{const main=document.getElementById("settings-main");return {scroll:main.scrollWidth,client:main.clientWidth}})()'); checks.push({ count, width, category, ...box }); assert(box.scroll <= box.client + 1, 'settings horizontal overflow')
+        }
+        if (process.env.DSH_FRIEND_EVIDENCE_DIR && count === 1000) await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'settings-stress-' + width + '.png'), (await window.webContents.capturePage()).toPNG())
+      }
+    }
+    window.setContentSize(900, 780); window.webContents.setZoomFactor(2); await js('window.friendSettingsNavigation.show("voice")'); await new Promise(resolve => setTimeout(resolve, 100))
+    const zoomBox = await js('(()=>{const main=document.getElementById("settings-main");return {scroll:main.scrollWidth,client:main.clientWidth}})()'); assert(zoomBox.scroll <= zoomBox.client + 1)
+    await js('document.getElementById("voice-engine").value="cosyvoice";document.getElementById("voice-engine").dispatchEvent(new Event("change"))'); assert(await js('document.getElementById("voice-clone-options").open && document.getElementById("voice-speed").disabled'))
+    if (process.env.DSH_FRIEND_EVIDENCE_DIR) await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'settings-ui-checks.json'), JSON.stringify({ checks, zoom200: zoomBox, hiddenInvalidField: 'passed', cloneFields: 'passed' }, null, 2))
+  } finally { window.webContents.setZoomFactor(1); window.setMinimumSize(...originalMin); window.setBounds(originalBounds); await js('render(window.__friendUIOriginal);delete window.__friendUIOriginal;window.friendSettingsNavigation.show("voice")') }
+}

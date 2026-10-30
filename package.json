@@ -1,6 +1,6 @@
 {
   "name": "dsh-friend",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "DSH 桌面陪伴：dsh-pet 动画、独立 API 聊天与经过授权的屏幕观察",
   "type": "module",
   "main": "src/plugin.mjs",
@@ -32,6 +32,7 @@
     "test:desktop": "node scripts/test-desktop.mjs",
     "test:uninstall": "node scripts/test-uninstall.mjs",
     "test:launcher": "node scripts/test-launcher.mjs",
+    "test:voice": "node scripts/test-voice.mjs",
     "build:client": "node scripts/build-client.mjs",
     "check": "node scripts/check.mjs",
     "prepack": "npm test && npm run check"
@@ -66,7 +67,10 @@
   "dependencies": {
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@electron-internal/extract-zip": "^1.0.5",
-    "@electron/get": "^5.1.0"
+    "@electron/get": "^5.1.0",
+    "sherpa-onnx-node": "2.0.1",
+    "tar-stream": "3.1.7",
+    "unbzip2-stream": "1.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",

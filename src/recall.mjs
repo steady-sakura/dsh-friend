@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { hasCredential, isSensitiveImportPath } from './imports.mjs'
+import { MemoryFiles, plainDirectory } from './memory-location.mjs'
 
 const hash = text => createHash('sha256').update(text).digest('hex')
 export function localDay(date = new Date()) { return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-') }
@@ -26,13 +27,14 @@ function chunks(text, size = 1000) {
   return rows
 }
 export class Recall {
-  constructor({ store, imports, now = () => new Date() }) {
+  constructor({ store, imports, memoryRoot = join(store.dir, 'memory'), now = () => new Date() }) {
+    this.memoryFiles = new MemoryFiles(memoryRoot, store)
     Object.assign(this, { store, imports, now }); this.sources = new Map(); this.fileCache = new Map(); this.facts = []; this.warnings = []; this.jobs = Promise.resolve(); this.lastWrites = []; this.revision = 0
   }
   async init() {
-    await mkdir(join(this.store.dir, 'memory/journal'), { recursive: true, mode: 0o700 })
-    try { await writeFile(join(this.store.dir, 'memory/MEMORY.md'), '# 长期记忆\n\n这里可以写长期有效的约定和偏好。不要填写密钥。\n模型摘记另外保留原文来源，不会覆盖这份文件。\n', { flag: 'wx', mode: 0o600 }) } catch (err) { if (err.code !== 'EEXIST') throw err }
-    const state = await this.store.read('memory/facts.json', { entries: [] }); this.facts = Array.isArray(state.entries) ? state.entries : []
+    await this.memoryFiles.init()
+    try { await writeFile(await this.memoryFiles.path('MEMORY.md'), '# 长期记忆\n\n这里可以写长期有效的约定和偏好。不要填写密钥。\n模型摘记另外保留原文来源，不会覆盖这份文件。\n', { flag: 'wx', mode: 0o600 }) } catch (err) { if (err.code !== 'EEXIST') throw err }
+    const state = await this.memoryFiles.read('facts.json', { entries: [] }); this.facts = Array.isArray(state.entries) ? state.entries : []
     await this.refresh()
   }
   source(name, type, text, extra = {}) {
@@ -61,7 +63,8 @@ export class Recall {
       if (prior?.sha256 === hash(text)) { this.sources.set(id, prior); return prior }
       return this.source(name, type, text, extra)
     }
-    const memoryRoot = join(this.store.dir, 'memory')
+    const memoryRoot = this.memoryFiles.root
+    await plainDirectory(memoryRoot)
     const walk = async (dir, prefix = '', depth = 0) => {
       for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
         if (entry.name.startsWith('.') || isSensitiveImportPath(entry.name) || /cookie|token|password|api[-_]?key/i.test(entry.name)) continue
@@ -212,11 +215,11 @@ export class Recall {
       writes.push({ kind: '日记', text: diary.text.trim() })
     }
     if (writes.some(w => w.kind === '长期摘记')) {
-      try { await this.store.write('memory/facts.json', { version: 1, entries: this.facts }) }
+      try { await this.memoryFiles.write('facts.json', { version: 1, entries: this.facts }) }
       catch (err) { this.facts = priorFacts; throw err }
     }
     if (blocks.length) {
-      const path = join(this.store.dir, 'memory/journal', day + '.md'), marker = '<!-- turn:' + turnId + ' -->'
+      const path = await this.memoryFiles.path('journal/' + day + '.md'), marker = '<!-- turn:' + turnId + ' -->'
       const previous = await readFile(path, 'utf8').catch(err => { if (err.code === 'ENOENT') return ''; throw err })
       if (!previous.includes(marker)) await this.store.enqueue(() => appendFile(path, (previous ? '\n\n' : '# ' + day + ' 日记\n\n') + marker + '\n## ' + now.toLocaleTimeString() + ' · ' + kind + '\n\n' + blocks.join('\n\n'), { mode: 0o600 }))
     }

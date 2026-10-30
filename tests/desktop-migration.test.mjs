@@ -21,10 +21,12 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 async function fixture() { const store = new Store(await mkdtemp(join(tmpdir(), 'dsh-friend-migration-'))); await store.init(); return { store, archive: new ChatArchive(store) } }
 const user = (id, text) => ({ id, role: 'user', text })
 const assistant = (id, text) => ({ id, role: 'assistant', text })
-test('bubble groups consecutive assistant replies across polls, ignores interactions and resets on a new user message', () => {
-  const rows = [user('u', '你好'), assistant('a', '第一段'), { id: 'i', role: 'interaction', text: '轻点' }, assistant('b', '第二段')]
+test('bubble groups only one reply, ignores interactions and resets on a new user message', () => {
+  const rows = [user('u', '你好'), { ...assistant('a', '第一段'), replyGroup: 'one' }, { id: 'i', role: 'interaction', text: '轻点' }, { ...assistant('b', '第二段'), replyGroup: 'one' }]
   assert.equal(FriendChatPreview.text(rows.slice(0, 2)), '第一段'); assert.equal(FriendChatPreview.text(rows), '第一段\n\n第二段'); assert.equal(FriendChatPreview.text(rows), '第一段\n\n第二段')
   assert.equal(FriendChatPreview.text([...rows, user('u2', '新消息')]), '你：新消息'); assert.equal(FriendChatPreview.text([...rows, user('u2', '新消息'), assistant('c', '新回复')]), '新回复')
+  assert.equal(FriendChatPreview.text([...rows, { ...assistant('c', '主动新话题'), replyGroup: 'two' }]), '主动新话题')
+  assert.equal(FriendChatPreview.text([...rows, assistant('legacy', '无分组旧回复')]), '无分组旧回复')
 })
 test('drafts persist in accepted edit order and a delayed send acknowledgment never clears newer typing', async () => {
   const { store } = await fixture(), first = deferred(), writes = []; let blocked = true

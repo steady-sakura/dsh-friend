@@ -14,7 +14,7 @@ export class Companion {
     Object.assign(this, { store, vault, api, catalog, onChange }); this.history = []; this.sessionId = randomUUID(); this.working = false; this.pending = []; this.command = null; this.actionQueue = []; this.capture = { phase: 'off', active: false, source: '', ownerOnline: true }; this.closed = false; this.error = ''; this.generation = 0; this.lastActivity = Date.now()
   }
   async init() { this.config = validateConfig(await this.store.read('settings.json', {})); this.history = await this.store.history() }
-  ready() { return Boolean(this.vault.keys.apiKey) }
+  ready() { return !this.maintenance && Boolean(this.vault.keys.apiKey) }
   state() {
     const history = this.history.filter(row => row.sessionId === this.sessionId).slice(-100)
     return { chat: { opened: !this.closed, ready: this.ready(), working: this.working, pending: this.pending.length > 0, lastOutcome: this.lastOutcome, sessionId: this.sessionId, file: 'sessions/' + this.sessionId + '.jsonl', history, historyHasMore: this.currentCount > history.length }, capture: { ...this.capture, retryAt: this.observer.retryAt, latestFrame: this.frames.info(this.frames.frames.at(-1)) }, pet: { command: this.command }, error: this.error, name: this.config.name, memory: { enabled: this.config.memoryEnabled, cloud: memoryAllowed(this.config), ...(this.recall?.status() || {}) }, memoryIssue: this.memoryIssue || '' }
@@ -50,7 +50,7 @@ export class Companion {
     if (this.pending.length) void this.pump().catch(err => { this.error = err.message })
   }
   async turn({ kind, prompt, row, image, frame, guard = () => true, onOutcome = () => {} }) {
-    if (this.working || this.closed) return false
+    if (this.working || this.closed || this.maintenance) return false
     this.working = true; this.activeKind = kind; this.error = ''; this.memoryIssue = ''; const epoch = this.generation
     this.controller = new AbortController(); const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(120000)]); this.onChange(); let sideEffects = false, completed = false, analyzed = false
     const replyId = randomUUID(); let receipt, attempt = 0
@@ -185,6 +185,7 @@ export class Companion {
     return this.frames.add({ ...body, source: this.capture.source })
   }
   async observe({ sessionId, generation, sha, force = false }) {
+    if (!force && Date.now() < (this.quietUntil || 0)) return false
     if (!this.capture.active || sessionId !== this.capture.sessionId || generation !== this.capture.generation || this.working || this.pending.length) return false
     const frame = this.frames.find({ sessionId, generation, sha })
     if (!frame || !force && !this.observer.canTry(sha, this.config.observeSeconds)) return false
@@ -205,6 +206,7 @@ export class Companion {
   }
   async tick() {
     this.nextAction()
+    if (Date.now() < (this.quietUntil || 0)) return
     if (this.working || this.pending.length || this.closed || !this.ready() || !this.config.proactive || Date.now() - this.lastActivity < this.config.proactiveSeconds * 1000) return
     await this.turn({ kind: 'proactive', prompt: '【自由活动】现在是' + new Date().toLocaleString() + '。如果有想说的就说，可以自己选动作，也可以安静。此刻没有新的屏幕画面。' })
   }

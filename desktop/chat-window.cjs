@@ -61,7 +61,7 @@ function createChatWindow({ BrowserWindow, pet, screen, preload, preference, sav
   return { window, url, get view() { return mode }, get expanded() { return expanded }, show, follow,
     fit(height) {
       if (!Number.isFinite(height) || height < 1 || height > 100000) throw Error('气泡高度无效')
-      if (mode === 'bubble' && !expanded) { bubbleHeight = Math.max(60, Math.ceil(height)); follow() }
+      if (mode === 'bubble' && !expanded) { bubbleHeight = Math.min(360, Math.max(60, Math.ceil(height))); follow() }
       return { height: window.getBounds().height }
     },
     async load() { follow(); await window.loadURL(url); ready = true; await show(mode) },

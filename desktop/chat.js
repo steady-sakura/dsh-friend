@@ -1,6 +1,8 @@
 import { FriendChatPreview } from './chat-preview.js'
+import { FriendVoicePlayer } from './audio-player.js'
 const $ = id => document.getElementById(id)
 const call = (action, body) => window.friend.call(action, body)
+const voicePlayer = new FriendVoicePlayer(body => void call('voice-ended', body).catch(problem))
 let snapshot = null, polling = false, sending = false, retry = null, mode = 'bubble', expanded = false, historyKey = null, sessionId = null
 let fitting = false, lastFit = '', pickerNotice = null, pickerNoticeTimer = null, draftTouched = false, draftWrites = Promise.resolve()
 let browsing = null, archiveRows = [], archiveBefore = null, archiveMore = false, currentRows = null, currentBefore = null, currentMore = null, currentSession = null
@@ -16,7 +18,7 @@ function queueFit() {
     if (mode !== 'bubble' || expanded) return
     const card = document.querySelector('.card'), style = getComputedStyle(card), width = $('last-message').getBoundingClientRect().width
     if (!width) return
-    const measure = $('message-measure'); measure.style.width = width + 'px'; measure.textContent = $('last-message').textContent
+    const measure = $('message-measure'); measure.style.width = width + 'px'; measure.textContent = FriendChatPreview.text(snapshot?.chat.history)
     const children = [...card.children].filter(node => getComputedStyle(node).display !== 'none')
     const height = Math.ceil(children.reduce((total, node) => total + (node.id === 'last-message' ? Math.max(24, measure.getBoundingClientRect().height) : node.getBoundingClientRect().height), 0) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) + parseFloat(style.gap) * Math.max(0, children.length - 1))
     const key = width + ':' + height
@@ -41,6 +43,18 @@ function view(next, details = false) {
 function problem(error) { $('status').textContent = String(error?.message || error); $('status').title = $('status').textContent; document.body.classList.add('connection-problem'); queueFit() }
 const deliveryLabels = { generating: '正在生成', saved: '已留底，未确认发送', sending: '正在保存聊天', accepted: '本机聊天已保存', quiet: '本轮没有发言', context: '检索过程，仅留底', failed: '失败，未正常发送', unknown: '结果待核对' }
 let deliveryBefore = null, deliveryBusy = false
+let compactKey = null
+function renderCompact(history) {
+  const groups = FriendChatPreview.groups(history), key = JSON.stringify(groups)
+  if (key === compactKey) return
+  const container = $('last-message'), follow = compactKey === null || container.scrollHeight - container.scrollTop - container.clientHeight < 35, oldTop = container.scrollTop, oldHeight = container.scrollHeight, first = container.firstElementChild?.dataset.group
+  container.replaceChildren()
+  for (const group of groups) { const row = document.createElement('div'); row.className = 'compact-group ' + group.role; row.dir = 'auto'; row.dataset.group = group.id; row.textContent = group.text; if (group.at) row.title = new Date(group.at).toLocaleString(); container.append(row) }
+  if (!groups.length) container.textContent = FriendChatPreview.text(history)
+  const firstStayed = container.firstElementChild?.dataset.group === first
+  compactKey = key
+  requestAnimationFrame(() => { if (follow) container.scrollTop = container.scrollHeight; else container.scrollTop = Math.max(0, oldTop + (firstStayed ? 0 : container.scrollHeight - oldHeight)) })
+}
 async function loadDeliveries(append = false) {
   if (deliveryBusy) return; deliveryBusy = true; $('delivery-refresh').disabled = true
   try {
@@ -77,7 +91,7 @@ function render(value) {
   if (pickerNotice) $('status').textContent = pickerNotice.message
   $('status').title = $('status').textContent; $('pause').textContent = capture.phase === 'paused' ? '继续看' : '暂停看'; $('pause').disabled = capture.phase === 'off'; $('send').disabled = sending || !chat.ready || !chat.opened
   $('look').disabled = !capture.active || chat.working; $('keep').disabled = !capture.latestFrame
-  const text = FriendChatPreview.text(chat.history); if ($('last-message').textContent !== text) $('last-message').textContent = text
+  renderCompact(chat.history)
   queueFit()
   if (currentSession !== chat.sessionId) { currentSession = chat.sessionId; currentRows = null; currentBefore = null; currentMore = null; if (!browsing) historyVersion++ }
   if (currentRows) currentRows = mergeRows(currentRows, chat.history)
@@ -89,7 +103,10 @@ function render(value) {
   container.replaceChildren()
   if (!rows.length) { const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = '这里还没有聊天记录。'; container.append(empty) }
   for (const row of rows) {
-    const item = document.createElement('div'); item.dataset.messageId = row.id; item.className = 'row ' + row.role; item.textContent = (row.role === 'user' ? '你：' : row.role === 'interaction' ? '互动：' : (value.name || '小鲸') + '：') + row.text
+    const item = document.createElement('div'); item.dataset.messageId = row.id; item.className = 'row ' + row.role
+    const meta = document.createElement('div'); meta.className = 'row-meta'; const author = document.createElement('span'); author.textContent = row.role === 'user' ? '你' : row.role === 'interaction' ? '本地互动' : value.name || '小鲸'; author.dir = 'auto'; meta.append(author)
+    if (row.at && Number.isFinite(Date.parse(row.at))) { const time = document.createElement('time'); time.dateTime = row.at; time.textContent = new Date(row.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); time.title = new Date(row.at).toLocaleString(); meta.append(time) }
+    const body = document.createElement('div'); body.className = 'row-body'; body.dir = 'auto'; body.textContent = row.text; item.append(meta, body)
     if (row.role === 'user' && !['done', 'archived'].includes(row.status)) { const tag = document.createElement('small'); tag.textContent = row.problem || '已保存，正在处理或等候接话'; item.append(tag) }
     container.append(item)
   }
@@ -159,6 +176,8 @@ $('input').oninput = saveDraft
 for (const event of ['mouseenter', 'mouseleave', 'focusin', 'focusout']) document.querySelector('.card').addEventListener(event, queueFit)
 new ResizeObserver(queueFit).observe(document.body)
 window.friend.onAction?.(event => {
+  if (event.action === 'audio') { void voicePlayer.play(event); return }
+  if (event.action === 'audio-stop') { voicePlayer.stop(); return }
   if (event.action === 'view') view(event.mode, event.expanded === true)
   else if (event.action === 'notice') problem(event.message)
   else if (event.action === 'picker-status') {
