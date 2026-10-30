@@ -5,7 +5,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { safePath } from './chat-archive.mjs'
 import { plainDirectory } from './memory-location.mjs'
 const files = new Set(['settings.json', 'preferences.json', 'credentials.json', 'imports.json', 'voice.json', 'input-receipts.jsonl', 'input-receipts-ready.json'])
-const dirs = new Set(['chats', 'sessions', 'deliveries', 'memory'])
+const dirs = new Set(['chats', 'sessions', 'deliveries', 'reply-originals', 'memory'])
 const limit = 256 * 1024 * 1024
 const allowed = name => !name.includes('\\') && !name.includes(':') && !name.split('/').some(p => !p || p === '.' || p === '..' || p.startsWith('.')) && (files.has(name) || name === 'voice/reference.wav' || dirs.has(name.split('/')[0]) && /\.(?:json|jsonl|md|txt)$/.test(name))
 const hash = data => createHash('sha256').update(data).digest('hex')
@@ -28,7 +28,7 @@ export async function backupData(store, memoryRoot) {
     }
   }
   for (const name of files) { try { await add(store.dir, name) } catch (error) { if (error.code !== 'ENOENT') throw error } }
-  for (const name of ['chats', 'sessions', 'deliveries']) { try { await walk(store.dir, name + '/', name + '/') } catch (e) { if (e.code !== 'ENOENT') throw e } }
+  for (const name of ['chats', 'sessions', 'deliveries', 'reply-originals']) { try { await walk(store.dir, name + '/', name + '/') } catch (e) { if (e.code !== 'ENOENT') throw e } }
   await walk(memoryRoot, '', 'memory/')
   try { await add(store.dir, 'voice/reference.wav') } catch (e) { if (e.code !== 'ENOENT') throw e }
   return gzipSync(Buffer.from(JSON.stringify({ app: 'dsh-friend-backup', schema: 1, at: new Date().toISOString(), entries })))

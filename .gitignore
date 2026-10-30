@@ -18,6 +18,7 @@ keeps/
 input-receipts-ready.json
 evidence/
 deliveries/
+reply-originals/
 voice/
 voice.json
 storage.json

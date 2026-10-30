@@ -27,6 +27,9 @@ test('bubble groups only one reply, ignores interactions and resets on a new use
   assert.equal(FriendChatPreview.text([...rows, user('u2', '新消息')]), '你：新消息'); assert.equal(FriendChatPreview.text([...rows, user('u2', '新消息'), assistant('c', '新回复')]), '新回复')
   assert.equal(FriendChatPreview.text([...rows, { ...assistant('c', '主动新话题'), replyGroup: 'two' }]), '主动新话题')
   assert.equal(FriendChatPreview.text([...rows, assistant('legacy', '无分组旧回复')]), '无分组旧回复')
+  assert.equal(FriendChatPreview.groups(rows).length, 1); assert.equal(FriendChatPreview.groups(rows)[0].text, '第一段\n\n第二段')
+  assert.deepEqual(FriendChatPreview.groups([...rows, user('u2', '新消息')]).map(row => row.text), ['你：新消息'])
+  assert.deepEqual(FriendChatPreview.groups([...rows, assistant('new', '只展示这轮')]).map(row => row.text), ['只展示这轮'])
 })
 test('drafts persist in accepted edit order and a delayed send acknowledgment never clears newer typing', async () => {
   const { store } = await fixture(), first = deferred(), writes = []; let blocked = true

@@ -72,7 +72,7 @@ export class Companion {
         if (epoch !== this.generation || this.closed || !guard()) return false
         const capture = async text => {
           try { await this.deliveries.update(receipt, { originalText: text.slice(0, 128000), originalTruncated: text.length > 128000, status: 'saved' }) }
-          catch { this.memoryIssue = '模型原文留底写盘失败，未继续发送；请检查本机数据目录 deliveries。'; throw Error(this.memoryIssue) }
+          catch { this.memoryIssue = '模型原文留底写盘失败，未继续发送；请检查本机数据目录 reply-originals。'; throw Error(this.memoryIssue) }
         }
         result = await this.api.complete({ config: this.config, keys: this.vault.keys, history, prompt: useMemory && row ? '[本次用户原话来源 chat:' + row.id + ']\n' + prompt : prompt, image, frame, signal, catalog: this.catalog, imported: this.imports?.context(), continuation, onVisible: capture, recall: useMemory ? { text: context.text + evidence, remaining: 2 - round, receipts: this.recall.lastWrites } : null })
         if (receipt.status === 'generating') await capture(result.originalText ?? result.messages?.join('\n\n') ?? result.say ?? '')

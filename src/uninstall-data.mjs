@@ -8,6 +8,7 @@ const dirs = ['chats', 'sessions', 'memory', 'keeps', 'Cache', 'Code Cache', 'GP
 const files = ['settings.json', 'preferences.json', 'credentials.json', 'imports.json', 'input-receipts.jsonl', 'input-receipts-ready.json', 'Local State', 'Preferences', 'DIPS', 'DIPS-wal', 'DIPS-shm', 'Visited Links', 'TransportSecurity', 'Network Persistent State', 'First Run', 'lockfile', 'chrome_debug.log', 'DevToolsActivePort', 'SingletonLock', 'SingletonCookie', 'SingletonSocket']
 const managed = new Set([...dirs, ...files])
 managed.add('deliveries')
+managed.add('reply-originals')
 for (const name of ['voice', 'voice.json', 'storage.json', 'backups']) managed.add(name)
 const isManaged = name => managed.has(name) || /^(?:settings|preferences|credentials|imports|input-receipts-ready)\.json\.[a-f0-9-]{36}\.tmp$/.test(name)
 const key = path => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path)

@@ -9,7 +9,7 @@ export const FriendChatPreview = (() => {
       if (row.role === 'assistant' && last?.role === 'assistant' && last.id === key) last.text += '\n\n' + row.text
       else result.push({ id: key, role: row.role, at: row.at, text: (row.role === 'user' ? '你：' : '') + row.text })
     }
-    return result
+    return result.slice(-1)
   }
   function text(history) {
     const rows = (Array.isArray(history) ? history : []).filter(row => ['user', 'assistant'].includes(row?.role) && typeof row.text === 'string' && row.text.trim())

@@ -75,6 +75,11 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     const callsBeforeHistory = calls.length
     await chat.window.webContents.executeJavaScript('document.getElementById("history-sessions").click()', true)
     await waitFor(() => chat.window.webContents.executeJavaScript('[...document.querySelectorAll("#session-list button")].some(b=>b.textContent.includes("' + oldSession.slice(0, 8) + '"))'), 'session list')
+    await chat.window.webContents.executeJavaScript('document.getElementById("history-sessions").click()', true)
+    assert(await chat.window.webContents.executeJavaScript('document.getElementById("session-browser").hidden && document.getElementById("history-sessions").getAttribute("aria-expanded")==="false"'))
+    await new Promise(resolve => setTimeout(resolve, 1100)); assert(await chat.window.webContents.executeJavaScript('document.getElementById("session-browser").hidden'))
+    await chat.window.webContents.executeJavaScript('document.getElementById("history-sessions").click()', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('!document.getElementById("session-browser").hidden && document.querySelectorAll("#session-list button").length>0'), 'session list reopened')
     await chat.window.webContents.executeJavaScript('[...document.querySelectorAll("#session-list button")].find(b=>b.textContent.includes("' + oldSession.slice(0, 8) + '")).click()', true)
     await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("history").textContent.includes("另一个会话的历史原文")'), 'old session viewer')
     await engine.add('assistant', '当前的新消息不覆盖旧会话查看', { replyGroup: 'synthetic-current' }); await new Promise(resolve => setTimeout(resolve, 1100))
@@ -116,13 +121,17 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     await waitFor(() => !engine.working && engine.lastOutcome?.status === 'failed', 'truncated reply retained')
     assert.equal((await store.history(1000)).filter(r => r.role === 'assistant' && !assistantIds.has(r.id)).length, 0)
     const failedId = engine.lastOutcome.id, callCount = calls.length
-    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=true', true)
-    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".delivery-row").length>0'), 'receipt list')
-    await chat.window.webContents.executeJavaScript('document.querySelector(".delivery-row button").click()', true)
-    await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("delivery-original").textContent.includes("这是未完成的合成原话。")'), 'original failed text shown safely')
-    await chat.window.webContents.executeJavaScript('[...document.querySelector(".delivery-row").querySelectorAll("button")].find(b=>b.textContent==="结束提醒").click()', true)
+    await chat.window.webContents.executeJavaScript('document.getElementById("unsent").open=true', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll("#unsent-list .delivery-row").length>0'), 'unsent list')
+    assert(await chat.window.webContents.executeJavaScript('[...document.querySelectorAll("#unsent-list .delivery-row")].every(row=>["failed","context"].includes(row.dataset.status))'))
+    await chat.window.webContents.executeJavaScript('document.querySelector("#unsent-list .delivery-row button").click()', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("unsent-original").textContent.includes("这是未完成的合成原话。")'), 'original failed text shown safely')
+    await chat.window.webContents.executeJavaScript('[...document.querySelector("#unsent-list .delivery-row").querySelectorAll("button")].find(b=>b.textContent==="结束提醒").click()', true)
     await waitFor(async () => (await engine.deliveries.read(failedId)).dismissed, 'dismiss retains failed state')
     assert.equal((await engine.deliveries.read(failedId)).status, 'failed'); assert.equal(calls.length, callCount)
+    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=true', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelector("#delivery-list [data-status=accepted]")!==null'), 'accepted receipts are independently listed')
+    assert(await chat.window.webContents.executeJavaScript('!document.getElementById("unsent").open'))
     await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("status").textContent.includes("本轮未确认正常回复")'), 'terminal outcome shown')
     if (process.env.DSH_FRIEND_EVIDENCE_DIR) {
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'chat.png'), (await chat.window.webContents.capturePage()).toPNG())
@@ -131,12 +140,22 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       await settingsWindow.webContents.executeJavaScript('document.getElementById("role-import").scrollIntoView()')
       await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'imports.png'), (await settingsWindow.webContents.capturePage()).toPNG())
     }
-    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=false', true)
+    await chat.window.webContents.executeJavaScript('document.getElementById("receipts").open=false;document.getElementById("unsent").open=false', true)
+    await engine.turn({ kind: 'proactive', prompt: '合成正常接话恢复' })
     await chat.show('bubble', true, { expanded: false })
-    for (let i = 0; i < 8; i++) await engine.add('assistant', '独立合成回复 ' + i + '。'.repeat(150), { replyGroup: randomUUID() })
-    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".compact-group").length>8 && document.getElementById("last-message").scrollHeight>document.getElementById("last-message").clientHeight'), 'compact history is scrollable')
+    for (let i = 0; i < 8; i++) await engine.add('assistant', '之前的独立合成回复 ' + i, { replyGroup: randomUUID() })
+    const latestGroup = randomUUID(); await engine.add('assistant', '当前这轮的长回复。'.repeat(120), { replyGroup: latestGroup })
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".compact-group").length===1 && !document.getElementById("last-message").textContent.includes("之前的独立") && document.getElementById("last-message").scrollHeight>document.getElementById("last-message").clientHeight'), 'only current reply is scrollable')
     assert(chat.window.getBounds().height <= 360)
     await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop=0', true)
+    await engine.add('assistant', '同一轮补充的一段话。', { replyGroup: latestGroup })
+    await new Promise(r => setTimeout(r, 1200)); assert.equal(await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop'), 0)
+    await verifyChatUI(chat)
+    if (process.env.DSH_FRIEND_EVIDENCE_DIR) await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'current-bubble.png'), (await chat.window.webContents.capturePage()).toPNG())
+    await chat.window.webContents.executeJavaScript('document.getElementById("open-chat").click()', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('document.body.classList.contains("bubble-expanded") && document.getElementById("history").textContent.includes("之前的独立合成回复")'), 'previous replies accessible from chat records')
+    await chat.window.webContents.executeJavaScript('document.getElementById("open-chat").click()', true)
+    await waitFor(() => chat.window.webContents.executeJavaScript('!document.body.classList.contains("bubble-expanded")'), 'chat records folded')
     await engine.add('assistant', '最新合成短句', { replyGroup: randomUUID() })
     await new Promise(r => setTimeout(r, 1200)); assert.equal(await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop'), 0)
     await settingsWindow.webContents.executeJavaScript('document.querySelector("[data-section=voice]").click(); document.getElementById("voice-install").scrollIntoView({block:"start"})', true)
@@ -164,14 +183,27 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       assert((await readFile(join(target, 'facts.json'), 'utf8')).includes('星河饼干'))
       const exported = await settingsWindow.webContents.executeJavaScript('window.settings.manage("backup")', true); assert(exported.saved)
       const { decodeBackup } = await import('../src/backup.mjs'); assert(decodeBackup(await readFile(join(store.dir, 'synthetic-export.dshbackup'))).some(row => row.name === 'memory/facts.json'))
-      updates.fetch = async url => new Response(JSON.stringify(url.includes('/commits/') ? { sha: 'c'.repeat(40) } : url.endsWith('package.json') ? { name: 'dsh-friend', version: '0.7.1' } : { workflow_runs: [{ name: 'Check plugin', event: 'push', head_branch: 'main', head_sha: 'c'.repeat(40), conclusion: 'success' }] }))
+      updates.fetch = async url => new Response(JSON.stringify(url.includes('/commits/') ? { sha: 'c'.repeat(40) } : url.endsWith('package.json') ? { name: 'dsh-friend', version: '0.7.3' } : { workflow_runs: [{ name: 'Check plugin', event: 'push', head_branch: 'main', head_sha: 'c'.repeat(40), conclusion: 'success' }] }))
       const checked = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-check")', true); assert(checked.ready)
       const installed = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-install")', true); assert(installed.updated); assert(installed.restartRequired)
     } finally { dialog.showMessageBox = originalDialog; dialog.showOpenDialog = originalOpen; dialog.showSaveDialog = originalSave }
-    console.log('INTEGRATION_OK: sidebar settings, bounded scrollable compact history without scroll theft, voicePlayback=' + Boolean(process.env.DSH_FRIEND_VOICE_TEST_MODEL) + ', custom memory migration, backup, confirmed update IPC with synthetic host, capture isolation, exact keeps, native replies and receipts.')
+    console.log('INTEGRATION_OK: toggled sessions, current-reply-only scrollable bubble, previous replies via chat records, separate unsent and receipt views; voicePlayback=' + Boolean(process.env.DSH_FRIEND_VOICE_TEST_MODEL) + ', custom memory, backup, update IPC, isolated capture, exact keeps and plain replies.')
   } finally { fixture?.destroy(); server.closeAllConnections(); server.close() }
 }
 module.exports = { run }
+async function verifyChatUI(chat) {
+  const window = chat.window, js = source => window.webContents.executeJavaScript(source, true)
+  await chat.show('panel', true)
+  for (const [width, height, zoom] of [[430,650,1],[340,360,1],[430,650,2]]) {
+    window.setMinimumSize(240, 220); window.setBounds({ width, height }); window.webContents.setZoomFactor(zoom)
+    await new Promise(resolve => setTimeout(resolve, 150))
+    const result = await js('(()=>{const input=document.getElementById("input"),send=document.getElementById("send");send.scrollIntoView({block:"nearest"});return {overflow:document.querySelector(".card").scrollWidth>document.querySelector(".card").clientWidth+1,input:input.getBoundingClientRect().width,send:send.getBoundingClientRect().right<=innerWidth+1}})()')
+    assert(!result.overflow && result.input > 50 && result.send, JSON.stringify({ width, height, zoom, result }))
+  }
+  window.webContents.setZoomFactor(1); window.setBounds({ width: 430, height: 650 }); await new Promise(resolve => setTimeout(resolve, 150))
+  if (process.env.DSH_FRIEND_EVIDENCE_DIR) await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'chat-panel-refined.png'), (await window.webContents.capturePage()).toPNG())
+  await chat.show('bubble', true, { expanded: false })
+}
 async function verifySettingsUI(window) {
   const originalBounds = window.getBounds(), originalMin = window.getMinimumSize(), checks = []
   const js = text => window.webContents.executeJavaScript(text, true)

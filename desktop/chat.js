@@ -25,7 +25,7 @@ function queueFit() {
     if (key !== lastFit) { lastFit = key; call('bubble-fit', { height }).catch(problem) }
   })
 }
-function draftState() { document.body.classList.toggle('has-draft', Boolean($('input').value)); queueFit() }
+function draftState() { document.body.classList.toggle('has-draft', Boolean($('input').value)); $('input-count').textContent = $('input').value.length + ' / 4000'; queueFit() }
 function saveDraft() {
   draftTouched = true; retry = { text: $('input').value.trim(), id: crypto.randomUUID() }
   const body = { text: $('input').value, id: retry.id }
@@ -36,54 +36,57 @@ function view(next, details = false) {
   if (mode === next && expanded === details && document.body.classList.contains(next + '-mode')) return
   const bottom = nearBottom(); mode = next; expanded = details === true
   document.body.classList.toggle('bubble-mode', next === 'bubble'); document.body.classList.toggle('panel-mode', next === 'panel'); document.body.classList.toggle('bubble-expanded', expanded && next === 'bubble')
-  $('view-label').textContent = next === 'panel' ? '聊天面板' : '聊天气泡'; $('switch-view').textContent = next === 'panel' ? '返回气泡' : '面板'; $('open-chat').textContent = expanded ? '收起记录' : '聊天'
+  $('view-label').textContent = next === 'panel' ? '聊天面板' : '桌面陪伴'; $('switch-view').textContent = next === 'panel' ? '返回气泡' : '面板'; $('open-chat').textContent = expanded ? '收起记录' : '聊天记录'; $('open-chat').setAttribute('aria-expanded', String(expanded))
   if (bottom) requestAnimationFrame(scrollLatest)
   queueFit()
 }
 function problem(error) { $('status').textContent = String(error?.message || error); $('status').title = $('status').textContent; document.body.classList.add('connection-problem'); queueFit() }
-const deliveryLabels = { generating: '正在生成', saved: '已留底，未确认发送', sending: '正在保存聊天', accepted: '本机聊天已保存', quiet: '本轮没有发言', context: '检索过程，仅留底', failed: '失败，未正常发送', unknown: '结果待核对' }
-let deliveryBefore = null, deliveryBusy = false
+const deliveryLabels = { generating: '正在生成', saved: '已留底，未确认发送', sending: '正在保存聊天', accepted: '已保存到聊天', quiet: '本轮没有发言', context: '未发送 · 检索过程', failed: '未发送 · 本轮失败', unknown: '发送结果待核对' }
+const deliveryPages = { delivery: { before: null, busy: false }, unsent: { before: null, busy: false } }
 let compactKey = null
 function renderCompact(history) {
   const groups = FriendChatPreview.groups(history), key = JSON.stringify(groups)
   if (key === compactKey) return
-  const container = $('last-message'), follow = compactKey === null || container.scrollHeight - container.scrollTop - container.clientHeight < 35, oldTop = container.scrollTop, oldHeight = container.scrollHeight, first = container.firstElementChild?.dataset.group
+  const container = $('last-message'), follow = container.scrollHeight - container.scrollTop - container.clientHeight < 35, oldTop = container.scrollTop, first = container.firstElementChild?.dataset.group
   container.replaceChildren()
   for (const group of groups) { const row = document.createElement('div'); row.className = 'compact-group ' + group.role; row.dir = 'auto'; row.dataset.group = group.id; row.textContent = group.text; if (group.at) row.title = new Date(group.at).toLocaleString(); container.append(row) }
   if (!groups.length) container.textContent = FriendChatPreview.text(history)
   const firstStayed = container.firstElementChild?.dataset.group === first
   compactKey = key
-  requestAnimationFrame(() => { if (follow) container.scrollTop = container.scrollHeight; else container.scrollTop = Math.max(0, oldTop + (firstStayed ? 0 : container.scrollHeight - oldHeight)) })
+  requestAnimationFrame(() => { container.scrollTop = !firstStayed ? 0 : follow ? container.scrollHeight : oldTop })
 }
-async function loadDeliveries(append = false) {
-  if (deliveryBusy) return; deliveryBusy = true; $('delivery-refresh').disabled = true
+async function loadDeliveries(kind = 'delivery', append = false) {
+  const page = deliveryPages[kind], node = suffix => $(kind + '-' + suffix)
+  if (page.busy) return; page.busy = true; node('refresh').disabled = true
   try {
-    const result = await call('deliveries', { before: append ? deliveryBefore : null, limit: 8 })
-    if (!append) $('delivery-list').replaceChildren()
+    const result = await call('deliveries', { before: append ? page.before : null, limit: 8, view: kind === 'unsent' ? 'unsent' : 'all' })
+    if (!append) { node('list').replaceChildren(); node('original').textContent = ''; node('status').textContent = '' }
     for (const row of result.items) {
-      const item = document.createElement('div'); item.className = 'delivery-row'
+      const item = document.createElement('div'); item.className = 'delivery-row'; item.dataset.status = row.status; item.dataset.deliveryId = row.id
       const title = document.createElement('p'); title.textContent = (deliveryLabels[row.status] || row.status) + (row.dismissed ? ' · 已结束提醒' : '') + ' · ' + (row.at ? new Date(row.at).toLocaleString() : row.id)
       const reason = document.createElement('p'); reason.textContent = (row.reason || '此处不代表本人已读。') + (row.controlIssue ? ' ' + row.controlIssue : '')
-      const action = (text, fn) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.disabled = row.unreadable === true; button.onclick = async () => { button.disabled = true; try { await fn() } catch (error) { $('delivery-status').textContent = error.message } finally { button.disabled = false } }; return button }
-      const read = action('查看原文', async () => { const value = await call('delivery-read', { id: row.id }); $('delivery-original').textContent = value.originalText || '本次没有取得可保留的正文。'; $('delivery-status').textContent = (deliveryLabels[value.status] || value.status) + '：' + value.reason + (value.controlIssue ? ' ' + value.controlIssue : '') + (value.originalTruncated ? ' 留底达到大小限制，非完整原文。' : ''); $('delivery-original').scrollIntoView({ block: 'nearest' }); $('delivery-original').focus({ preventScroll: true }) })
+      const action = (text, fn) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.disabled = row.unreadable === true; button.onclick = async () => { button.disabled = true; try { await fn() } catch (error) { node('status').textContent = error.message } finally { button.disabled = false } }; return button }
+      const read = action(kind === 'unsent' ? '查看未发原话' : '核对原文', async () => { const value = await call('delivery-read', { id: row.id }); node('original').textContent = value.originalText || '本次没有取得可保留的正文。'; node('status').textContent = (deliveryLabels[value.status] || value.status) + '：' + value.reason + (value.controlIssue ? ' ' + value.controlIssue : '') + (value.originalTruncated ? ' 留底达到大小限制，非完整原文。' : ''); node('original').scrollIntoView({ block: 'nearest' }); node('original').focus({ preventScroll: true }) })
       item.append(title, reason, read)
-      if (row.status === 'unknown') item.append(action('核对本机记录', async () => { const value = await call('delivery-verify', { id: row.id }); $('delivery-status').textContent = value.message; await loadDeliveries() }))
-      if (!row.dismissed && ['failed', 'unknown', 'context'].includes(row.status)) item.append(action('结束提醒', async () => { await call('delivery-dismiss', { id: row.id }); await loadDeliveries(); $('delivery-status').textContent = '提醒已结束，原文和实际状态保留；未补发。' }))
-      $('delivery-list').append(item)
+      if (row.status === 'unknown') item.append(action('核对本机记录', async () => { const value = await call('delivery-verify', { id: row.id }); await loadDeliveries(kind); node('status').textContent = value.message }))
+      if (!row.dismissed && ['failed', 'unknown', 'context'].includes(row.status)) item.append(action('结束提醒', async () => { await call('delivery-dismiss', { id: row.id }); await loadDeliveries(kind); node('status').textContent = '提醒已结束，原文和实际状态保留；未补发。' }))
+      node('list').append(item)
     }
-    deliveryBefore = result.nextBefore; $('delivery-more').hidden = !deliveryBefore
-    if (!result.items.length && !append) $('delivery-status').textContent = '还没有回执。新回复会在本机留底。'
-  } catch (error) { $('delivery-status').textContent = '回执暂时无法读取，聊天仍可继续。' }
-  finally { deliveryBusy = false; $('delivery-refresh').disabled = false }
+    page.before = result.nextBefore; node('more').hidden = !page.before
+    if (!result.items.length && !append) node('status').textContent = kind === 'unsent' ? (page.before ? '本页没有未发原话，可继续翻更早记录。' : '没有已留底的未发原话。发送结果不明的记录请到“发送回执”核对。') : '还没有发送回执。新回复会在本机留底。'
+  } catch { node('status').textContent = '记录暂时无法读取，聊天仍可继续。' }
+  finally { page.busy = false; node('refresh').disabled = false }
 }
-$('delivery-refresh').onclick = () => loadDeliveries()
-$('delivery-more').onclick = () => loadDeliveries(true)
-$('receipts').ontoggle = () => { if ($('receipts').open) void loadDeliveries() }
+for (const kind of ['delivery', 'unsent']) {
+  $(kind + '-refresh').onclick = () => loadDeliveries(kind)
+  $(kind + '-more').onclick = () => loadDeliveries(kind, true)
+  const panel = $(kind === 'delivery' ? 'receipts' : 'unsent'); panel.ontoggle = () => { if (panel.open) void loadDeliveries(kind) }
+}
 function render(value) {
   snapshot = value; view(value.chatView, value.bubbleExpanded === true)
-  const { chat, capture } = value; $('voice').checked = value.voice
+  const { chat, capture } = value; $('voice').checked = value.voice; $('companion-name').textContent = value.name || '小鲸'
   const status = !chat.opened ? '桌面聊天已结束。' : !chat.ready ? '先在 API 设置中填入密钥。' : chat.working ? '正在处理当前请求……' : chat.pending ? '消息已保存，等待接话。' : '桌面聊天可用。'
-  const outcome = !chat.working && !chat.pending && chat.lastOutcome?.status === 'quiet' ? ' 本轮已完成，没有发言。' : !chat.working && ['failed', 'unknown'].includes(chat.lastOutcome?.status) ? ' 本轮未确认正常回复，可查看“未发原话与回执”。' : ''
+  const outcome = !chat.working && !chat.pending && chat.lastOutcome?.status === 'quiet' ? ' 本轮已完成，没有发言。' : !chat.working && chat.lastOutcome?.status === 'failed' ? ' 本轮未确认正常回复，可查看“未发原话”。' : !chat.working && chat.lastOutcome?.status === 'unknown' ? ' 本轮发送结果待核对，请查看“发送回执”。' : ''
   document.body.classList.toggle('connection-problem', !chat.opened || !chat.ready || Boolean(value.voiceProblem) || Boolean(value.memoryIssue) || Boolean(value.error))
   document.body.classList.toggle('has-outcome', Boolean(outcome))
   $('status').textContent = (value.error || status) + (capture.active ? ' 画面共享中，可按需分析：' + capture.source : capture.phase === 'paused' ? ' 画面分析已暂停。' : ' 当前没有共享画面。') + (capture.message ? ' ' + capture.message : '') + (browsing ? ' 正在翻旧记录，输入仍发到当前聊天。' : '') + (value.voiceProblem ? ' ' + value.voiceProblem : '') + (value.memoryIssue ? ' ' + value.memoryIssue : '')
@@ -114,10 +117,11 @@ function render(value) {
   if (bottom) scrollLatest(); else { container.scrollTop = oldTop; if (rows.at(-1)?.id !== lastId) $('latest').hidden = false }
 }
 async function poll() { if (polling) return; polling = true; try { render(await call('state')) } catch (error) { problem(error) } finally { polling = false } }
-function returnCurrent() { historyVersion++; browsing = null; archiveRows = []; archiveBefore = null; historyKey = null; $('session-browser').hidden = true; if (snapshot) render(snapshot) }
+function sessionsVisible(open) { $('session-browser').hidden = !open; $('history-sessions').setAttribute('aria-expanded', String(open)) }
+function returnCurrent() { historyVersion++; browsing = null; archiveRows = []; archiveBefore = null; historyKey = null; sessionsVisible(false); if (snapshot) render(snapshot) }
 async function listSessions(append = false) {
   if (sessionsBusy) return
-  sessionsBusy = true; $('session-browser').hidden = false
+  sessionsBusy = true
   try {
     const result = await call('sessions', { limit: 12, ...(append && sessionsBefore ? { before: sessionsBefore } : {}) })
     if (!append) $('session-list').replaceChildren()
@@ -135,7 +139,7 @@ async function loadArchive(item) {
   try {
     const result = await call('history', { file: item.file, limit: 100 })
     if (version !== historyVersion) return
-    browsing = item; archiveRows = result.history; archiveBefore = result.nextBefore; archiveMore = result.hasMore; historyKey = null; $('session-browser').hidden = true; await poll()
+    browsing = item; archiveRows = result.history; archiveBefore = result.nextBefore; archiveMore = result.hasMore; historyKey = null; sessionsVisible(false); await poll()
   } finally { historyBusy = false }
 }
 async function older() {
@@ -154,7 +158,7 @@ $('switch-view').onclick = () => call('chat-view', { mode: mode === 'bubble' ? '
 $('open-chat').onclick = () => call('chat-view', { mode: 'bubble', expanded: !expanded }).catch(problem)
 $('fold').onclick = () => call('chat-view', { mode: mode === 'panel' || expanded ? 'bubble' : 'hidden' }).catch(problem)
 $('latest').onclick = scrollLatest; $('history').onscroll = () => { if (nearBottom()) $('latest').hidden = true }
-$('history-sessions').onclick = () => { void listSessions().catch(problem) }; $('sessions-more').onclick = () => { void listSessions(true).catch(problem) }; $('history-current').onclick = returnCurrent; $('older').onclick = () => { void older().catch(problem) }
+$('history-sessions').onclick = () => { const open = $('session-browser').hidden; sessionsVisible(open); if (open) void listSessions().catch(problem) }; $('sessions-more').onclick = () => { void listSessions(true).catch(problem) }; $('history-current').onclick = returnCurrent; $('older').onclick = () => { void older().catch(problem) }
 $('share').onclick = () => call('share').catch(problem); $('settings').onclick = () => call('settings').catch(problem)
 $('stop').onclick = () => call('stop').then(poll).catch(problem); $('pause').onclick = () => call(snapshot?.capture.phase === 'paused' ? 'resume' : 'pause').then(poll).catch(problem)
 $('look').onclick = () => call('look-frame').then(poll).catch(problem)

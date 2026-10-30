@@ -1,6 +1,6 @@
 const defaults = {
   bubble: { width: 310, height: 300, offset: { x: -80, y: -314 } },
-  panel: { width: 430, height: 510, offset: { x: -200, y: -524 } },
+  panel: { width: 430, height: 650, offset: { x: -200, y: -664 } },
 }
 const minimum = { bubble: { width: 240, height: 220 }, panel: { width: 340, height: 360 } }
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))

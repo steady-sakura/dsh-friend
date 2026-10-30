@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, symlink, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -12,7 +12,47 @@ import { Deliveries } from '../src/deliveries.mjs'
 import { visibleReply } from '../src/reply-protocol.mjs'
 import { Recall } from '../src/recall.mjs'
 import { ChatArchive } from '../src/chat-archive.mjs'
+import { backupData, decodeBackup } from '../src/backup.mjs'
 const catalog = [{ id: 'wave', label: '挥手' }]
+
+test('model original and receipt metadata are stored separately and backed up together', async () => {
+  const { engine, store } = await fixture(async () => packet('合成未发原文', 'length'))
+  await engine.turn({ kind: 'user', prompt: 'hello' }); const id = engine.lastOutcome.id
+  const metadata = JSON.parse(await readFile(join(store.dir, engine.deliveries.relative(id)), 'utf8'))
+  assert.equal(metadata.schema, 2); assert.equal(metadata.status, 'failed'); assert.equal(metadata.originalText, undefined)
+  assert.equal(await engine.deliveries.originals.read(id), '合成未发原文'); assert.equal((await engine.deliveries.read(id)).originalText, '合成未发原文')
+  const memory = join(store.dir, 'memory'); await mkdir(memory)
+  const entries = decodeBackup(await backupData(store, memory)); assert(entries.some(e => e.name === engine.deliveries.relative(id))); assert(entries.some(e => e.name === engine.deliveries.originals.relative(id)))
+})
+
+test('unsent pages exclude accepted, quiet and unknown records without losing older failures', async () => {
+  const { engine } = await fixture(async () => packet('unused')), ledger = engine.deliveries, expected = new Set()
+  for (const status of ['failed', 'accepted', 'context', 'unknown', 'quiet', 'failed', 'accepted']) {
+    const row = await ledger.create({ replyId: randomUUID(), sessionId: engine.sessionId, kind: 'user', attempt: 1 })
+    await ledger.update(row, { originalText: status === 'quiet' ? '' : '合成原文 ' + status, status })
+    if (['failed', 'context'].includes(status)) expected.add(row.id)
+  }
+  let before = null; const found = []
+  do { const page = await ledger.list({ view: 'unsent', before, limit: 1 }); found.push(...page.items); before = page.nextBefore } while (before)
+  assert.deepEqual(new Set(found.map(row => row.id)), expected); assert.equal(found.length, expected.size)
+  assert(found.every(row => !Object.hasOwn(row, 'originalText'))); await assert.rejects(ledger.list({ view: 'anything' }))
+})
+
+test('legacy inline originals stay readable without a read-time migration', async () => {
+  const { engine, store } = await fixture(async () => packet('unused')), ledger = engine.deliveries
+  const row = await ledger.create({ replyId: randomUUID(), sessionId: engine.sessionId, kind: 'user', attempt: 1 }); ledger.active.delete(row.id)
+  const legacy = { ...row, originalText: '合成旧版未发原文', status: 'failed' }; await store.write(ledger.relative(row.id), legacy)
+  const before = await readFile(join(store.dir, ledger.relative(row.id)), 'utf8'); assert.equal((await ledger.read(row.id)).originalText, legacy.originalText)
+  assert.equal(await readFile(join(store.dir, ledger.relative(row.id)), 'utf8'), before)
+  await ledger.dismiss(row.id); assert.equal(await ledger.originals.read(row.id), legacy.originalText); assert.equal((await ledger.read(row.id)).originalText, legacy.originalText)
+})
+
+test('receipt state remains readable and verifiable independently of the original text file', async () => {
+  const { engine, store } = await fixture(async () => packet('合成已保存正文')); await engine.turn({ kind: 'user', prompt: 'hello' })
+  const id = engine.lastOutcome.id, path = join(store.dir, engine.deliveries.originals.relative(id)); await rename(path, path + '.unavailable')
+  assert.equal((await engine.deliveries.list()).items[0].status, 'accepted'); assert.equal((await engine.deliveries.list({ view: 'unsent' })).items.length, 0)
+  assert.equal((await engine.deliveries.verify(id)).verified, true); await assert.rejects(engine.deliveries.read(id), { code: 'ENOENT' })
+})
 const packet = (text, reason = 'stop', calls = undefined) => new Response(JSON.stringify({ choices: [{ finish_reason: reason, message: { content: text, ...(calls ? { tool_calls: calls } : {}) } }] }))
 const control = args => [{ id: 'call-synthetic', type: 'function', function: { name: 'companion_control', arguments: JSON.stringify(args) } }]
 async function fixture(fetchImpl) {
@@ -68,7 +108,7 @@ test('crash during local admission becomes unknown; partial records are verified
 })
 test('failed original-text write prevents normal speech and side effects', async () => {
   const { engine, store } = await fixture(async () => packet('必须留底的正文', 'tool_calls', control({ actions: ['wave'] })))
-  const write = store.write.bind(store); store.write = (name, value) => name.startsWith('deliveries/') && value.originalText ? Promise.reject(Error('synthetic disk failure')) : write(name, value)
+  const write = store.write.bind(store); store.write = (name, value) => name.startsWith('reply-originals/') && value.originalText ? Promise.reject(Error('synthetic disk failure')) : write(name, value)
   assert.equal(await engine.turn({ kind: 'user', prompt: 'hi' }), false); assert.equal(engine.history.length, 0); assert.equal(engine.command, null); assert.match(engine.memoryIssue, /留底.*写盘失败/)
 })
 test('receipt pagination, immutable originals, traversal and directory links are checked', async () => {

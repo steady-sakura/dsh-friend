@@ -16,7 +16,7 @@ const privateNames = /^(?:state|memory|chats|sessions|keeps|conversations|logs|c
 async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (['.git', 'node_modules', '.local', 'evidence', 'test-results'].includes(entry.name) || entry.name.endsWith('.tgz')) continue
-    if (privateNames.test(entry.name) || ['deliveries.json', 'voice.json', 'storage.json'].includes(entry.name) || entry.name.endsWith('.dshbackup') || entry.isDirectory() && ['deliveries', 'voice', 'backups'].includes(entry.name)) throw Error('Private data in distribution: ' + entry.name)
+    if (privateNames.test(entry.name) || ['deliveries.json', 'voice.json', 'storage.json'].includes(entry.name) || entry.name.endsWith('.dshbackup') || entry.isDirectory() && ['deliveries', 'reply-originals', 'voice', 'backups'].includes(entry.name)) throw Error('Private data in distribution: ' + entry.name)
     const file = join(dir, entry.name)
     if (entry.isDirectory()) { await walk(file); continue }
     if (!/\.(?:mjs|cjs|js|json|yml|md|html|css|cmd)$/.test(file)) continue
