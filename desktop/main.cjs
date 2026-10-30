@@ -13,7 +13,7 @@ async function start() {
   app.setName('dsh-friend')
   const sendParent = message => { if (process.connected) { try { process.send(message, () => {}) } catch {} } }
   const version = require('../package.json').version
-  const capabilities = { picker: 4, bubble: 3, drafts: 1, history: 1, movement: 2, capture: 2, memory: 2, uninstall: 1, plainReply: 2, delivery: 1, updates: 1, voice: 1, backup: 1 }
+  const capabilities = { picker: 4, bubble: 3, drafts: 1, history: 1, movement: 2, capture: 2, memory: 2, uninstall: 1, plainReply: 2, delivery: 1, updates: 2, voice: 1, backup: 1 }
   // Personal state never lives in the installed plugin or working repository.
   const dataDir = process.env.DSH_FRIEND_DATA_DIR || join(app.getPath('appData'), 'dsh-friend')
   const { ensureDataOwner, makeCleanupPlan } = await import('../src/uninstall-data.mjs')
@@ -31,8 +31,8 @@ async function start() {
   const vault = new Vault(store, safeStorage); await vault.init()
   const api = new API()
   let closing = false, settingsWindow, captureWindow, captureConsent, captureRequest, captureOpening, timer, suspended = false, speechIssue = '', hydrated = false, seen = new Set(), hostInfo = null, parentRemoval = null
-  let preference = await store.read('preferences.json', { voice: false }), restoring = false
-  const save = patch => { if (restoring) return Promise.reject(Error('资料恢复已开始，请关闭桌宠后重新打开')); Object.assign(preference, patch); return store.write('preferences.json', preference) }
+  let preference = await store.read('preferences.json', { voice: false }), restoring = false, updateFrozen = false, maintenanceOperation = null, reopenMessage = ''
+  const save = patch => { if (restoring || updateFrozen || engine.maintenance) return Promise.resolve(); Object.assign(preference, patch); return store.write('preferences.json', preference) }
   const { ChatDraft } = await import('../src/drafts.mjs'); const drafts = new ChatDraft({ initial: preference.chatDraft, save })
   const { ChatArchive } = await import('../src/chat-archive.mjs'); const archive = new ChatArchive(store)
   const { Imports } = await import('../src/imports.mjs'); const imports = new Imports(store); await imports.init()
@@ -64,17 +64,18 @@ async function start() {
   if (Number.isFinite(preference.position?.x) && Number.isFinite(preference.position?.y)) mover.move(preference.position)
   const { Voice } = await import('../src/voice.mjs')
   const speech = new Voice({ store, report: message => { speechIssue = message }, play: value => { if (!chat.window.isDestroyed()) chat.window.webContents.send('friend-pet-action', { action: 'audio', ...value }) }, stopPlayback: () => { if (!chat.window.isDestroyed()) chat.window.webContents.send('friend-pet-action', { action: 'audio-stop' }) } }); await speech.init(); speech.setEnabled(preference.voice === true)
-  const { Updates } = await import('../src/updates.mjs'); let pendingUpdate = null
+  const { Updates, UpdateError } = await import('../src/updates.mjs'); let pendingUpdate = null
   const updates = new Updates({ current: version, install: spec => new Promise((resolve, reject) => {
-    if (!hostInfo?.canUpdate || !process.connected) return reject(Error('请从 DSH 打开桌宠后更新'))
+    if (!hostInfo?.canUpdate || !process.connected) return reject(new UpdateError('not-started'))
     const requestId = randomUUID(), timer = setTimeout(() => { pendingUpdate = null; engine.closed = true; reject(Error('更新结果暂未确认，请在 DSH 插件管理器核对；桌宠停止接话，未自动重试')) }, 600000)
     pendingUpdate = { requestId, done: result => { clearTimeout(timer); pendingUpdate = null; resolve(result) } }; sendParent({ type: 'dsh-friend-update-request', approved: true, requestId, spec })
   }) })
-  const settingsState = async () => ({ ...engine.publicConfig(), dataDir, memoryPath: memoryLocation.root, imports: imports.status(), memory: recall.status(), voiceSettings: await speech.status(), canUpdate: hostInfo?.canUpdate === true, desktop: { version, capabilities } })
-  const maintain = async fn => {
+  const maintenanceState = () => ({ active: Boolean(engine.maintenance), kind: maintenanceOperation?.kind || '', startedAt: maintenanceOperation?.startedAt || 0, needsReopen: Boolean(reopenMessage), message: maintenanceOperation?.message || reopenMessage })
+  const settingsState = async () => ({ ...engine.publicConfig(), dataDir, memoryPath: memoryLocation.root, imports: imports.status(), memory: recall.status(), voiceSettings: await speech.status(), canUpdate: hostInfo?.canUpdate === true, maintenance: maintenanceState(), desktop: { version, capabilities } })
+  const maintain = async (kind, fn) => {
     if (engine.working || engine.pending.length || engine.admitting.size || engine.maintenance) throw Error('请等当前聊天处理完成再操作')
-    engine.maintenance = true; engine.cancel(); speech.stop(); mover.stop()
-    try { await store.writes; await recall.jobs; return await fn() } finally { engine.maintenance = false }
+    engine.maintenance = true; maintenanceOperation = { kind, startedAt: Date.now(), message: { update: '正在安装插件更新，等待 DSH 返回结果；聊天暂停，记录仍可查看。', backup: '正在导出本机备份，聊天暂时暂停。', restore: '正在恢复本机资料，完成后需要重新打开桌宠。', memory: '正在切换记忆目录，聊天暂时暂停。' }[kind] }; engine.cancel(); speech.stop(); mover.stop()
+    try { await store.writes; await recall.jobs; return await fn() } finally { engine.maintenance = false; maintenanceOperation = null }
   }
   const state = () => {
     const value = engine.state()
@@ -82,7 +83,7 @@ async function start() {
       speech.speak(row.text); if (chat.view === 'hidden') void chat.show('bubble').catch(() => {})
     }
     seen = new Set(value.chat.history.map(row => row.id)); hydrated = true
-    return { ...value, desktop: { version, capabilities }, voice: preference.voice === true, voiceProblem: speechIssue, chatView: chat.view, bubbleExpanded: chat.expanded }
+    return { ...value, maintenance: maintenanceState(), desktop: { version, capabilities }, voice: preference.voice === true, voiceProblem: speechIssue, chatView: chat.view, bubbleExpanded: chat.expanded }
   }
   const openSettings = async () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return }
@@ -116,10 +117,11 @@ async function start() {
   ipcMain.handle('friend-settings', async (event, action, body = {}) => {
     if (!trusted(event, settingsWindow, 'settings.html')) throw Error('设置入口无效')
     if (closing) throw Error('正在关闭或卸载，请等待完成')
-    if (engine.closed && !['read', 'voice-status', 'voice-stop', 'folder', 'memory-folder'].includes(action)) throw Error('本次桌宠已结束接话；更新或恢复资料后，请关闭并重新打开桌宠')
-    if (action === 'uninstall') return requestUninstall()
+    if (engine.closed && !['read', 'maintenance-status', 'voice-status', 'voice-stop', 'folder', 'memory-folder'].includes(action)) throw Error(reopenMessage || '本次桌宠已结束接话；更新或恢复资料后，请关闭并重新打开桌宠')
+    if (action === 'maintenance-status') return maintenanceState()
+    if (action === 'uninstall') { if (engine.maintenance) throw Error(maintenanceState().message); return requestUninstall() }
     if (action === 'read') return settingsState()
-    if (engine.maintenance && action !== 'voice-status') throw Error('正在处理资料或更新，请等待完成')
+    if (engine.maintenance && !['voice-status', 'voice-stop'].includes(action)) throw Error(maintenanceState().message)
     if (action === 'api-probe') return api.probe({ config: engine.config, key: vault.keys.apiKey })
     if (action === 'quiet') { const minutes = Number(body.minutes); if (![0, 30, 60, 120].includes(minutes)) throw Error('安静时长无效'); await save({ quietUntil: minutes ? Date.now() + minutes * 60000 : 0 }); engine.quietUntil = preference.quietUntil; return { message: minutes ? '已暂停主动聊天和自动分析 ' + minutes + ' 分钟。' : '已恢复原来的主动活动设置。' } }
     if (action === 'voice-status') return speech.status()
@@ -134,16 +136,16 @@ async function start() {
     if (action === 'memory-location') {
       const result = await dialog.showOpenDialog(settingsWindow, { title: '选择空文件夹或 DSH Friend 记忆目录', properties: ['openDirectory', 'createDirectory'] }); if (result.canceled) return settingsState()
       const choice = await dialog.showMessageBox(settingsWindow, { type: 'question', message: '如何使用这个记忆目录？', detail: '复制不会删除原目录；有同名冲突会停止。外部自选目录卸载时保留。', buttons: ['取消', '复制现有记忆并切换', '使用目标已有记忆'], defaultId: 0, cancelId: 0, noLink: true }); if (!choice.response) return settingsState()
-      await maintain(async () => { const prior = memoryLocation.root; try { await memoryLocation.select(result.filePaths[0], { copy: choice.response === 1 }); const next = new Recall({ store, imports, memoryRoot: memoryLocation.root }); await next.init(); recall = next; engine.recall = next } catch (error) { memoryLocation.root = prior; await store.write('storage.json', { memoryPath: prior }); throw error } }); return settingsState()
+      await maintain('memory', async () => { const prior = memoryLocation.root; try { await memoryLocation.select(result.filePaths[0], { copy: choice.response === 1 }); const next = new Recall({ store, imports, memoryRoot: memoryLocation.root }); await next.init(); recall = next; engine.recall = next } catch (error) { memoryLocation.root = prior; await store.write('storage.json', { memoryPath: prior }); throw error } }); return settingsState()
     }
     if (action === 'backup') {
       const result = await dialog.showSaveDialog(settingsWindow, { title: '导出本机资料备份', defaultPath: 'dsh-friend-' + Date.now() + '.dshbackup', filters: [{ name: 'DSH Friend 备份', extensions: ['dshbackup'] }] }); if (result.canceled) return { cancelled: true }
-      return maintain(async () => { const { backupData } = await import('../src/backup.mjs'); await require('node:fs/promises').writeFile(result.filePath, await backupData(store, memoryLocation.root), { flag: 'wx', mode: 0o600 }); return { saved: true } })
+      return maintain('backup', async () => { const { backupData } = await import('../src/backup.mjs'); await require('node:fs/promises').writeFile(result.filePath, await backupData(store, memoryLocation.root), { flag: 'wx', mode: 0o600 }); return { saved: true } })
     }
     if (action === 'restore') {
       const result = await dialog.showOpenDialog(settingsWindow, { title: '选择本机备份', filters: [{ name: 'DSH Friend 备份', extensions: ['dshbackup'] }], properties: ['openFile'] }); if (result.canceled) return { cancelled: true }
       const choice = await dialog.showMessageBox(settingsWindow, { type: 'warning', message: '恢复备份中的同名资料？', detail: '会先保存当前资料到本机 backups 目录，再恢复同名文件；其他文件保留。记忆写入当前选择的位置。恢复后请关闭桌宠重新打开，当前共享会结束。', buttons: ['取消', '备份当前资料并恢复'], defaultId: 0, cancelId: 0, noLink: true }); if (choice.response !== 1) return { cancelled: true }
-      return maintain(async () => { engine.stopCapture(); const { restoreData } = await import('../src/backup.mjs'); const info = await require('node:fs/promises').lstat(result.filePaths[0]); if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024) throw Error('请选择不超过 256 MiB 的普通备份文件'); const bytes = await require('node:fs/promises').readFile(result.filePaths[0]); engine.closed = true; restoring = true; return restoreData(store, memoryLocation.root, bytes) })
+      return maintain('restore', async () => { engine.stopCapture(); const { restoreData } = await import('../src/backup.mjs'); const info = await require('node:fs/promises').lstat(result.filePaths[0]); if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024) throw Error('请选择不超过 256 MiB 的普通备份文件'); const bytes = await require('node:fs/promises').readFile(result.filePaths[0]); engine.closed = true; restoring = true; reopenMessage = '资料恢复流程已结束，请关闭并重新打开桌宠以核对资料。'; return restoreData(store, memoryLocation.root, bytes) })
     }
     if (action === 'update-check') { const result = await updates.check(); return { ...result, canInstall: hostInfo?.canUpdate === true } }
     if (action === 'update-notes') { if (!updates.checked) throw Error('请先检查更新'); await shell.openExternal(updates.checked.notes); return {} }
@@ -151,7 +153,12 @@ async function start() {
       if (!hostInfo?.canUpdate) throw Error('请从 DSH 打开桌宠后更新；独立启动入口不能修改宿主插件')
       if (!updates.checked?.ready) throw Error('请先检查更新并等待 CI 通过')
       const choice = await dialog.showMessageBox(settingsWindow, { type: 'question', message: '更新到 ' + updates.checked.version + '？', detail: '提交 ' + updates.checked.sha.slice(0, 12) + ' 已通过 CI。将结束共享并停止当前桌宠接话，个人资料保留。安装后从 DSH 正常重新打开；宿主要求重启时会明确提示。', buttons: ['取消', '安装此更新'], defaultId: 0, cancelId: 0, noLink: true }); if (choice.response !== 1) return { cancelled: true }
-      return maintain(async () => { engine.stopCapture(); const result = await updates.apply(); await dialog.showMessageBox(settingsWindow, { type: 'info', message: '更新包已安装。', detail: result.restartRequired ? '宿主要求重启，请按 DSH 提示正常重启后打开桌宠。不会自动重启 Web。' : '关闭此桌宠，再从 DSH 打开以加载新版本。', buttons: ['知道了'] }); engine.closed = true; return result })
+      const result = await maintain('update', async () => {
+        engine.stopCapture(); updateFrozen = true
+        try { const result = await updates.apply(); engine.closed = true; reopenMessage = '更新包已安装；此桌宠仍在运行 ' + version + '，请关闭后从 DSH 重新打开以加载新版。'; return result }
+        catch (error) { if (error.outcome === 'failed' || error.outcome === 'not-started') updateFrozen = false; else { engine.closed = true; reopenMessage = '更新结果待核对，请先查看 DSH 插件管理器，再关闭并重新打开桌宠。' }; throw error }
+      })
+      await dialog.showMessageBox(settingsWindow, { type: 'info', message: '更新包已安装。', detail: result.restartRequired ? '宿主要求重启，请按 DSH 提示正常重启后打开桌宠。不会自动重启 Web。' : '关闭此桌宠，再从 DSH 打开以加载新版本。', buttons: ['知道了'] }); return result
     }
     if (action === 'choose') {
       if (!['role', 'memory'].includes(body.kind)) throw Error('请选择角色或记忆')
@@ -212,6 +219,7 @@ async function start() {
   }
   const close = async ({ reason } = {}) => {
     if (closing) return
+    if (engine.maintenance) { notice(maintenanceState().message + ' 请等待结果后再关闭。'); return }
     try { await quiesce() } catch (error) { closing = false; notice(error.message); return }
     if (reason && !hidden) await dialog.showMessageBox({ type: 'info', title: 'DSH Friend 已关闭', message: reason === 'host-disabled' ? '宿主已停用桌面陪伴插件。' : '收到系统停止请求，桌面陪伴已关闭。', detail: '共享已结束，本机聊天与已保存的草稿保留。', buttons: ['知道了'] })
     app.quit()
@@ -239,18 +247,18 @@ async function start() {
     },
     finish: () => app.quit(),
   })
-  const requestUninstall = () => uninstallFlow.run().catch(async error => {
+  const requestUninstall = () => { if (engine.maintenance || updateFrozen || restoring) return Promise.reject(Error(maintenanceState().message || '请关闭并重新打开桌宠后再卸载')); return uninstallFlow.run().catch(async error => {
     if (!closing) throw error
     await dialog.showMessageBox({ type: 'warning', title: '未继续卸载', message: error.message, detail: '未启动资料清理。本机资料目录：' + dataDir, buttons: ['知道了'] }); app.quit()
     return { removed: false }
-  })
+  }) }
   ipcMain.handle('friend-pet', async (event, action, body = {}) => {
     const petSender = trusted(event, pet, 'index.html'), chatSender = trusted(event, chat.window, 'chat.html')
     if (!petSender && !chatSender) throw Error('拒绝非桌宠入口')
     if (closing) throw Error('桌宠正在关闭')
     if (!petSender && ['catalog', 'action-ack', 'interact', 'pointer', 'expand', 'drag-start', 'drag-end', 'menu', 'close'].includes(action)) throw Error('仅供桌宠身体使用')
     if (action === 'state') return state()
-    if (engine.maintenance && !['catalog', 'history', 'sessions', 'delivery-read', 'deliveries', 'voice-ended', 'voice-stop'].includes(action)) throw Error('正在处理资料或更新，请稍后再操作')
+    if ((engine.maintenance || engine.closed) && !['catalog', 'history', 'sessions', 'delivery-read', 'deliveries', 'voice-ended', 'voice-stop', 'bubble-fit', 'pointer', 'chat-view', 'expand', 'settings', 'menu', 'action-ack', 'close', 'stop', 'pause'].includes(action) && !(action === 'draft' && body.text === undefined)) throw Error(maintenanceState().message || '本次桌宠已结束接话，请关闭并重新打开。')
     if (action === 'voice-ended' && chatSender) { if (body.failed) speechIssue = '声音播放失败，请检查本机音频输出；文字仍保留。'; speech.ended(body.failed === true); return {} }
     if (action === 'voice-stop' && chatSender) { speech.stop(); return {} }
     if (['deliveries', 'delivery-read', 'delivery-dismiss', 'delivery-verify'].includes(action)) {
@@ -304,9 +312,9 @@ async function start() {
         { label: '聊天气泡', click: safe(() => chat.show('bubble', true, { expanded: true })) },
         { label: '聊天面板', click: safe(() => chat.show('panel', true)) },
         { label: 'API 与偏好设置', click: safe(openSettings) },
-        { label: '动作（' + actions.length + '）', submenu: [...new Set(actions.map(a => a.group))].map(group => ({ label: group, submenu: actions.filter(a => a.group === group).map(a => ({ label: a.label, click: safe(async () => { engine.act(a.id); await engine.interact('action', a.id) }) })) })) },
-        { type: 'separator' }, { label: '共享应用 / 屏幕…', click: safe(openCapture) },
-        { label: '暂停 / 继续看屏幕', click: safe(() => engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture()) },
+        { label: '动作（' + actions.length + '）', enabled: !engine.maintenance && !engine.closed, submenu: [...new Set(actions.map(a => a.group))].map(group => ({ label: group, submenu: actions.filter(a => a.group === group).map(a => ({ label: a.label, click: safe(async () => { engine.act(a.id); await engine.interact('action', a.id) }) })) })) },
+        { type: 'separator' }, { label: '共享应用 / 屏幕…', enabled: !engine.maintenance && !engine.closed, click: safe(openCapture) },
+        { label: '暂停 / 继续看屏幕', enabled: !engine.maintenance && !engine.closed, click: safe(() => engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture()) },
         { label: '结束共享', click: stopCapture },
         { label: '回到右下角', click: () => mover.reset() },
         { label: '打开本机聊天记录', click: safe(() => shell.openPath(join(dataDir, 'chats'))) },

@@ -146,7 +146,9 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
     for (let i = 0; i < 8; i++) await engine.add('assistant', '之前的独立合成回复 ' + i, { replyGroup: randomUUID() })
     const latestGroup = randomUUID(); await engine.add('assistant', '当前这轮的长回复。'.repeat(120), { replyGroup: latestGroup })
     await waitFor(() => chat.window.webContents.executeJavaScript('document.querySelectorAll(".compact-group").length===1 && !document.getElementById("last-message").textContent.includes("之前的独立") && document.getElementById("last-message").scrollHeight>document.getElementById("last-message").clientHeight'), 'only current reply is scrollable')
-    assert(chat.window.getBounds().height <= 360)
+    // Windows may round an outer window bound by one DIP at fractional DPI.
+    await waitFor(() => chat.window.getBounds().height <= 361, 'compact window reaches its height limit')
+    assert(chat.window.getBounds().height <= 361)
     await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop=0', true)
     await engine.add('assistant', '同一轮补充的一段话。', { replyGroup: latestGroup })
     await new Promise(r => setTimeout(r, 1200)); assert.equal(await chat.window.webContents.executeJavaScript('document.getElementById("last-message").scrollTop'), 0)
@@ -185,7 +187,27 @@ async function run({ engine, store, pet, chat, settingsWindow, openCapture, getC
       const { decodeBackup } = await import('../src/backup.mjs'); assert(decodeBackup(await readFile(join(store.dir, 'synthetic-export.dshbackup'))).some(row => row.name === 'memory/facts.json'))
       updates.fetch = async url => new Response(JSON.stringify(url.includes('/commits/') ? { sha: 'c'.repeat(40) } : url.endsWith('package.json') ? { name: 'dsh-friend', version: '0.7.3' } : { workflow_runs: [{ name: 'Check plugin', event: 'push', head_branch: 'main', head_sha: 'c'.repeat(40), conclusion: 'success' }] }))
       const checked = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-check")', true); assert(checked.ready)
-      const installed = await settingsWindow.webContents.executeJavaScript('window.settings.manage("update-install")', true); assert(installed.updated); assert(installed.restartRequired)
+      const originalInstall = updates.install; let failInstall
+      updates.install = () => new Promise(resolve => { failInstall = () => resolve({ application: 'failed', packageResult: { exitCode: 1 } }) })
+      const failedInstall = settingsWindow.webContents.executeJavaScript('window.settings.manage("update-install").then(()=>({ok:true}),error=>({ok:false,message:error.message}))', true)
+      await waitFor(() => engine.maintenance && failInstall, 'held installation starts maintenance')
+      const during = await settingsWindow.webContents.executeJavaScript('window.settings.manage("maintenance-status")'); assert.equal(during.kind, 'update'); assert(during.active)
+      await chat.window.webContents.executeJavaScript('window.friend.call("bubble-fit",{height:240}).then(()=>window.friend.call("chat-view",{mode:"panel"})).then(()=>window.friend.call("draft"))', true)
+      await waitFor(() => chat.window.webContents.executeJavaScript('document.getElementById("input").readOnly && document.getElementById("status").textContent.includes("正在安装插件更新") && !document.getElementById("status").textContent.includes("Error invoking")'), 'maintenance UI is informative without IPC errors')
+      await assert.rejects(chat.window.webContents.executeJavaScript('window.friend.call("input",{id:"' + randomUUID() + '",text:"维护期间不应接收此合成消息"})'), /正在安装/)
+      failInstall(); assert.equal((await failedInstall).ok, false)
+      await waitFor(() => !engine.maintenance && engine.ready(), 'known update failure releases maintenance and allows use')
+      await waitFor(() => chat.window.webContents.executeJavaScript('!document.getElementById("input").readOnly'), 'input recovers after known failure')
+      updates.install = originalInstall
+      let acknowledgeInfo
+      dialog.showMessageBox = async (...args) => args.at(-1).type === 'info' ? new Promise(resolve => { acknowledgeInfo = () => resolve({ response: 0 }) }) : { response: 1 }
+      const pendingInstalled = settingsWindow.webContents.executeJavaScript('window.settings.manage("update-install")', true)
+      await waitFor(() => acknowledgeInfo && engine.closed && !engine.maintenance, 'maintenance releases before final acknowledgment dialog')
+      assert((await settingsWindow.webContents.executeJavaScript('window.settings.manage("maintenance-status")')).needsReopen)
+      const newerPreferences = JSON.stringify({ syntheticNewVersion: true }); await writeFile(join(store.dir, 'preferences.json'), newerPreferences)
+      await chat.window.webContents.executeJavaScript('window.friend.call("chat-view",{mode:"panel"})', true); await new Promise(resolve => setTimeout(resolve, 200))
+      assert.equal(await readFile(join(store.dir, 'preferences.json'), 'utf8'), newerPreferences)
+      acknowledgeInfo(); const installed = await pendingInstalled; assert(installed.updated); assert(installed.restartRequired)
     } finally { dialog.showMessageBox = originalDialog; dialog.showOpenDialog = originalOpen; dialog.showSaveDialog = originalSave }
     console.log('INTEGRATION_OK: toggled sessions, current-reply-only scrollable bubble, previous replies via chat records, separate unsent and receipt views; voicePlayback=' + Boolean(process.env.DSH_FRIEND_VOICE_TEST_MODEL) + ', custom memory, backup, update IPC, isolated capture, exact keeps and plain replies.')
   } finally { fixture?.destroy(); server.closeAllConnections(); server.close() }
@@ -194,6 +216,12 @@ module.exports = { run }
 async function verifyChatUI(chat) {
   const window = chat.window, js = source => window.webContents.executeJavaScript(source, true)
   await chat.show('panel', true)
+  await js('document.getElementById("unsent").open=true')
+  await new Promise(resolve => setTimeout(resolve, 200))
+  const regions = await js('(()=>{const panel=document.getElementById("unsent"),surface=panel.querySelector(".delivery-surface"),content=panel.querySelector(".delivery-content"),heading=panel.querySelector("summary"),history=document.querySelector(".history-viewport");content.scrollTop=45;return {separate:heading.getBoundingClientRect().bottom<=surface.getBoundingClientRect().top+1,contentInset:content.getBoundingClientRect().top-surface.getBoundingClientRect().top,history:getComputedStyle(history).backgroundColor,delivery:getComputedStyle(surface).backgroundColor}})()')
+  assert(regions.separate && regions.contentInset >= 9 && regions.history !== regions.delivery, JSON.stringify(regions))
+  if (process.env.DSH_FRIEND_EVIDENCE_DIR) await writeFile(join(process.env.DSH_FRIEND_EVIDENCE_DIR, 'text-regions-0.7.3.png'), (await window.webContents.capturePage()).toPNG())
+  await js('document.getElementById("unsent").open=false')
   for (const [width, height, zoom] of [[430,650,1],[340,360,1],[430,650,2]]) {
     window.setMinimumSize(240, 220); window.setBounds({ width, height }); window.webContents.setZoomFactor(zoom)
     await new Promise(resolve => setTimeout(resolve, 150))

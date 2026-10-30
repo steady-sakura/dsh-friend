@@ -1,15 +1,14 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { electronVersion, electronDigests } from './electron-release.mjs'
 import { cachedArchive } from './runtime-cache.mjs'
 const execute = promisify(execFile)
 const send = value => { if (process.connected) process.send(value) }
-const main = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+const main = (() => { try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)) } catch { return false } })()
 let finished = false
 if (main) process.on('disconnect', () => process.exit(finished ? process.exitCode || 0 : 1))
 export async function probeElectron(path, arch = process.arch) {

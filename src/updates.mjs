@@ -1,4 +1,7 @@
 const repo = 'steady-sakura/dsh-friend'
+export class UpdateError extends Error {
+  constructor(outcome) { super(outcome === 'failed' ? '更新安装失败，当前桌宠可以继续使用；请在 DSH 插件管理器查看诊断后重试。' : outcome === 'not-started' ? '更新尚未开始，请重新检查更新并确认 DSH 已连接。' : '更新结果尚未确认，请先在 DSH 插件管理器核对；当前桌宠请关闭后重新打开，未自动重试。'); this.name = 'UpdateError'; this.outcome = outcome }
+}
 async function json(url, fetchImpl) {
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000), redirect: 'error', headers: { 'User-Agent': 'dsh-friend-update', Accept: 'application/vnd.github+json' } })
   if (!response.ok) { await response.body?.cancel(); throw Error('更新信息暂不可用（HTTP ' + response.status + '），可以稍后重试') }
@@ -19,12 +22,13 @@ export class Updates {
   }
   async apply() {
     const row = this.checked
-    if (this.busy || !row || Date.now() - row.checkedAt > 15 * 60000 || !row.ready || !this.install) throw Error('请先检查更新，确认通过检查后再安装；独立入口请从 DSH 打开插件设置')
+    if (this.busy || !row || Date.now() - row.checkedAt > 15 * 60000 || !row.ready || !this.install) throw new UpdateError('not-started')
     this.busy = true
     try {
       const result = await this.install('github:' + repo + '#' + row.sha)
-      if (result?.error || !['applied', 'restart-required'].includes(result?.application) || result?.packageResult?.exitCode !== 0 || result?.packageResult?.timedOut) throw Error('更新未确认成功，请到 DSH 插件管理器查看诊断；个人资料保留，未自动重试')
+      if (result?.error || !['applied', 'restart-required'].includes(result?.application) || result?.packageResult?.exitCode !== 0 || result?.packageResult?.timedOut) throw new UpdateError(Number.isInteger(result?.packageResult?.exitCode) && result.packageResult.exitCode !== 0 && !result.packageResult.timedOut ? 'failed' : 'unknown')
       return { updated: true, version: row.version, restartRequired: result.application === 'restart-required' }
-    } finally { this.busy = false }
+    } catch (error) { throw error instanceof UpdateError ? error : new UpdateError('unknown') }
+    finally { this.busy = false }
   }
 }

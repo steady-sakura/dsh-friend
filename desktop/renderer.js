@@ -6,7 +6,7 @@ let interactionUntil = 0, clickTimer = null, dragging = false
 let actionCatalog = new Map(), seenCommand = null, playingCommand = null, actionTimer = null, generation = 0
 let ackQueue = Promise.resolve()
 let pickerHintTimer = null
-const problem = err => { $('status').textContent = String(err.message || err); $('pet').title = '桌面连接提示：' + $('status').textContent }
+const problem = err => { $('status').textContent = String(err.message || err).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''); $('pet').title = '桌面连接提示：' + $('status').textContent }
 function animate(kind) {
   if (Date.now() < interactionUntil) return
   const next = '../assets/desktop-pet/' + kind + '.webm'
@@ -47,7 +47,7 @@ function render(value) {
   seenGroups = new Set(chat.history.filter(row => row.role === 'assistant').map(row => row.replyGroup || row.id))
   seen = new Set(chat.history.map(row => row.id)); hydrated = true
   if (newReply) react('talk', null, true)
-  $('status').textContent = chat.opened && chat.ready ? '桌面聊天已连接。' : '桌面聊天尚未连接。'
+  $('status').textContent = value.maintenance?.message || (chat.opened && chat.ready ? '桌面聊天已连接。' : '桌面聊天尚未连接。')
   baseAnimation()
 }
 async function poll() { if (polling) return; polling = true; try { render(await call('state')) } catch (err) { problem(err) } finally { polling = false } }

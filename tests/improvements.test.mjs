@@ -63,7 +63,9 @@ test('update check pins passing official CI commit and only hands the fixed spec
   updates.checked.ready = false; await assert.rejects(updates.apply()); updates.checked.ready = true; updates.checked.checkedAt = 0; await assert.rejects(updates.apply())
 })
 test('failed package update is never reported as installed or automatically repeated', async () => {
-  let calls = 0; const updates = new Updates({ install: async () => { calls++; return { application: 'failed', packageResult: { exitCode: 0 } } } }); updates.checked = { sha: 'a'.repeat(40), ready: true, checkedAt: Date.now() }; await assert.rejects(updates.apply(), /未确认成功/); assert.equal(calls, 1)
+  let calls = 0; const updates = new Updates({ install: async () => { calls++; return { application: 'failed', packageResult: { exitCode: 0 } } } }); updates.checked = { sha: 'a'.repeat(40), ready: true, checkedAt: Date.now() }; await assert.rejects(updates.apply(), error => error.outcome === 'unknown'); assert.equal(calls, 1); assert.equal(updates.busy, false)
+  updates.install = async () => ({ application: 'failed', packageResult: { exitCode: 1 } }); await assert.rejects(updates.apply(), error => error.outcome === 'failed'); assert.equal(updates.busy, false)
+  updates.checked.ready = false; await assert.rejects(updates.apply(), error => error.outcome === 'not-started')
 })
 test('host permits only pinned own-repo update; self-disposal keeps result channel alive', async () => {
   const child = new EventEmitter(); child.connected = true; child.exitCode = null; const sent = []; child.send = (m, cb) => { sent.push(m); cb?.() }; let installed = 0, done

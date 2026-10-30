@@ -7,7 +7,7 @@ const messages = {
   extract: 'Electron 运行时解压失败，请检查磁盘空间和目录权限；' + hint,
   version: '现成 Electron 的版本或架构不兼容，需要 43.3.0；' + hint,
   conflict: '独立运行时目录已有不兼容内容，未覆盖；' + hint,
-  worker: 'Electron 运行时准备进程异常退出；' + hint,
+  worker: 'Electron 运行时准备进程异常退出，请重新加载插件并检查安装是否完整。',
   spawn: '桌宠进程未能启动，请检查 Electron 可执行文件和目录权限。',
   window: '桌宠进程已启动，但窗口未在 20 秒内确认就绪；已有进程未被强制关闭，请检查原窗口或重新显示。',
   platform: '此平台或架构没有内置 Electron 校验值；' + hint,

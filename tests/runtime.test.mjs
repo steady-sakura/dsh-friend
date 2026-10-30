@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, lstat, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, lstat, readFile, symlink } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
 import { fork } from 'node:child_process'
-import { runtimeLocations, electronPath, ensureElectron } from '../src/runtime.mjs'
+import { root, runtimeLocations, electronPath, ensureElectron } from '../src/runtime.mjs'
 import { prepareRuntime, probeElectron } from '../src/runtime-worker.mjs'
 import { RuntimeError } from '../src/runtime-errors.mjs'
 import { cachedArchive } from '../src/runtime-cache.mjs'
@@ -70,6 +70,16 @@ test('real child process running a hung preparation is killed, not just abandone
 test('cancel before preparation does not create a worker', async () => {
   const controller = new AbortController(); controller.abort(); let forks = 0
   await assert.rejects(ensureElectron({ signal: controller.signal, forkWorker: () => { forks++ } }), /取消/); assert.equal(forks, 0)
+})
+
+test('runtime worker starts through a package link and reports its real result instead of exiting silently', async () => {
+  const f = await fixture(), alias = join(f.dir, 'linked-package'); await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  await assert.rejects(ensureElectron({ locations: { ...f.locations, candidates: [] }, timeoutMs: 5000, forkWorker: (_entry, args, options) => {
+    const child = fork(join(alias, 'src/runtime-worker.mjs'), args, options), send = child.send.bind(child)
+    child.send = (packet, callback) => send({ ...packet, platform: 'synthetic-unsupported' }, callback)
+    return child
+  } }), error => error.code === 'platform')
+  await assert.rejects(lstat(f.locations.dir), { code: 'ENOENT' })
 })
 test('host deadline covers start itself, releases busy, reports cause and permits retry', async () => {
   const host = new PetHost({ prepareTimeoutMs: 15, settleTimeoutMs: 5, start: async ({ onProgress }) => { onProgress({ phase: 'downloading', transferred: 43 * 1048576, total: 137 * 1048576 }); return new Promise(() => {}) } })

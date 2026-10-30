@@ -142,4 +142,10 @@ $('update-check').onclick = async () => {
   catch (err) { $('update-status').textContent = err.message } finally { $('update-check').disabled = false }
 }
 $('update-notes').onclick = () => window.settings.manage('update-notes').catch(error)
-$('update-install').onclick = async () => { $('update-install').disabled = true; $('update-check').disabled = true; $('update-status').textContent = '请在本机窗口确认；安装期间请保持 DSH 运行。'; try { const value = await window.settings.manage('update-install'); $('update-status').textContent = value.cancelled ? '已取消更新。' : '更新已安装，请关闭桌宠后从 DSH 重新打开。' } catch (err) { $('update-status').textContent = err.message } finally { $('update-check').disabled = false } }
+$('update-install').onclick = async () => {
+  $('update-install').disabled = true; $('update-check').disabled = true; $('update-status').textContent = '请在本机窗口确认；安装期间请保持 DSH 运行。'
+  const timer = setInterval(() => window.settings.manage('maintenance-status').then(value => { if (value.message) $('update-status').textContent = value.message + (value.active ? ' 已等待 ' + Math.floor((Date.now() - value.startedAt) / 1000) + ' 秒。' : '') }).catch(() => {}), 1000)
+  try { const value = await window.settings.manage('update-install'); $('update-status').textContent = value.cancelled ? '已取消更新。' : '更新已安装，请关闭桌宠后从 DSH 重新打开。' }
+  catch (err) { $('update-status').textContent = String(err.message || err).replace(/^Error invoking remote method '[^']+': (?:(?:Error|UpdateError): )?/, '') }
+  finally { clearInterval(timer); $('update-check').disabled = false }
+}
