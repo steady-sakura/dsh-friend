@@ -152,5 +152,5 @@ test('DSH plugin registers commands and a launcher without starting Electron or 
   ctx.provide('commands', { register: command => { registered.push(command); return () => {} } }); apply(ctx)
   assert.equal(name, 'dsh-friend'); assert.deepEqual(inject, ['commands', 'pluginManager', 'profileContext', 'typert']); assert.equal(registered[0].name, 'friend'); assert.equal(registered[0].recordInput, false)
   assert.equal(registered[1].name, 'friend-uninstall'); assert.equal(registered[1].recordInput, false)
-  assert.equal(ctx.friendLauncher.status().running, false); assert.equal(contract.invocations.length, 6)
+  assert.equal(ctx.friendLauncher.status().running, false); assert.equal(contract.invocations.length, 7)
 })

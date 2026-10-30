@@ -38,11 +38,12 @@ test('real DSH Gateway controls a late-started pet without a session, key or mod
   await f.call('close'); assert.equal((await f.call('status')).running, false)
   await f.call('open'); assert.equal(f.launches(), 2); await f.call('close')
 })
-test('Gateway only accepts six fixed no-argument operations; arbitrary commands and paths fail', async () => {
+test('Gateway only accepts seven fixed no-argument operations; arbitrary commands and paths fail', async () => {
   const f = fixture()
   await assert.rejects(f.call('execute', { command: 'not-allowed' }))
   await assert.rejects(f.call('open', { path: 'not-allowed' }))
   await assert.rejects(f.call('settings', { action: 'stop-another-plugin' }))
+  await assert.rejects(f.call('cancelStartup', { path: 'not-allowed' }))
   assert.equal(f.launches(), 0)
 })
 test('closing a pet is reversible; disposing the plugin prevents a new launch', async () => {

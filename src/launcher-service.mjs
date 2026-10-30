@@ -15,5 +15,6 @@ export class FriendLauncher extends TypertRemoteService {
   async settings() { await this.host.control('settings'); return { ...this.status(), message: 'API 设置窗口已打开。' } }
   async launcher() { await this.reveal(); return { ...this.status(), message: '已请求打开独立启动入口所在位置。可在 Web 未运行时双击启动。' } }
   async close() { await this.host.close(); return { ...this.status(), message: '桌宠已关闭，资料保留，可随时重新打开。' } }
+  async cancelStartup() { const result = await this.host.cancelStartup(); return { ...this.status(), message: result.cancelled ? '启动已取消，可以重新打开；已有桌宠和资料保留。' : '当前没有可取消的启动；已有桌宠未关闭。' } }
   async uninstall() { await this.host.uninstall(); return { ...this.status(), message: '请在本机确认窗口中选择保留或删除资料；取消不会卸载。' } }
 }

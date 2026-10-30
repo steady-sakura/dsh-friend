@@ -1,29 +1,51 @@
 import { randomUUID } from 'node:crypto'
 import { launch } from './runtime.mjs'
+import { RuntimeError, abortable, aborted, startupMessage, describePreparation } from './runtime-errors.mjs'
+
+async function stopUnconfirmed(child) {
+  if (!child || child.exitCode !== null || typeof child.kill !== 'function') return
+  let timer
+  const exited = new Promise(resolve => child.once('exit', resolve))
+  try { if (child.connected) child.send({ type: 'dsh-friend-close' }, () => {}); else child.kill() } catch { try { child.kill() } catch {} }
+  await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, 2000) })]); clearTimeout(timer)
+  if (child.exitCode === null) { try { child.kill('SIGKILL') } catch {} }
+}
 
 export class PetHost {
-  constructor({ start = launch, timeoutMs = 20000, profile = '', remove, install } = {}) { Object.assign(this, { start, timeoutMs, profile, remove, install }); this.child = null; this.opening = null; this.disposed = false; this.uninstalling = false; this.updating = false; this.abort = new AbortController() }
+  constructor({ start = launch, timeoutMs = 20000, prepareTimeoutMs = 60000, settleTimeoutMs = 2500, profile = '', remove, install } = {}) { Object.assign(this, { start, timeoutMs, prepareTimeoutMs, settleTimeoutMs, profile, remove, install }); this.child = null; this.opening = null; this.disposed = false; this.uninstalling = false; this.updating = false; this.abort = new AbortController(); this.preparation = { phase: '', transferred: 0, total: 0 }; this.error = '' }
   async open() {
     if (this.disposed) throw Error('插件已停止')
     if (this.updating || this.uninstalling) throw Error('插件正在更新或卸载，请等待完成')
     if (this.closing) throw Error('桌宠正在保存并关闭，请稍后再打开')
     if (this.opening) return this.opening
-    const operation = this.child && this.child.exitCode === null ? this.show() : this.spawn()
-    this.opening = operation.finally(() => { this.opening = null }); return this.opening
+    this.error = ''
+    const reuse = this.child && this.child.exitCode === null
+    if (!reuse) { this.startup = new AbortController(); this.preparation = { phase: 'checking', transferred: 0, total: 0 } }
+    const operation = reuse ? this.show() : this.spawn(this.startup)
+    this.opening = operation.catch(error => { this.error = startupMessage(error); this.preparation.phase = error.code === 'cancelled' ? 'cancelled' : 'failed'; throw error }).finally(() => { this.opening = null; this.startup = null }); return this.opening
   }
-  wait(child, accept, send) {
-    return new Promise((resolve, reject) => {
+  wait(child, accept, send, signal) {
+    let remove = () => {}
+    const waiting = new Promise((resolve, reject) => {
       const done = (error, value) => { clearTimeout(timer); child.removeListener('message', message); child.removeListener('exit', exited); child.removeListener('error', failed); error ? reject(error) : resolve(value) }
       const message = value => { const result = accept(value); if (result) done(null, result) }
-      const exited = () => done(Error('桌宠在确认窗口前退出'))
-      const failed = () => done(Error('桌宠进程未能启动'))
-      const timer = setTimeout(() => done(Error('桌宠暂未响应；已有窗口和共享未被关闭，请稍后再试')), this.timeoutMs)
+      const exited = () => done(new RuntimeError('spawn'))
+      const failed = () => done(new RuntimeError('spawn'))
+      const timer = setTimeout(() => done(new RuntimeError('window')), this.timeoutMs)
+      remove = () => { clearTimeout(timer); child.removeListener('message', message); child.removeListener('exit', exited); child.removeListener('error', failed) }
       child.on('message', message); child.once('exit', exited); child.once('error', failed)
       if (send) { try { send(error => { if (error) done(Error('桌宠窗口请求未送达')) }) } catch { done(Error('桌宠窗口请求未送达')) } }
     })
+    return abortable(waiting, signal).finally(remove)
   }
-  async spawn() {
-    const child = await this.start({ stdio: ['ignore', 'ignore', 'ignore', 'ipc'], signal: this.abort.signal }); this.child = child
+  async spawn(controller) {
+    const signal = AbortSignal.any([this.abort.signal, controller.signal]); let timer, child, starting
+    const progress = value => { if (!signal.aborted && ['checking', 'cache', 'downloading', 'extracting', 'spawning'].includes(value.phase)) this.preparation = { phase: value.phase, transferred: Number.isFinite(value.transferred) ? Math.min(1e12, Math.max(0, value.transferred)) : 0, total: Number.isFinite(value.total) ? Math.min(1e12, Math.max(0, value.total)) : 0 } }
+    timer = setTimeout(() => controller.abort(new RuntimeError('timeout', this.preparation.phase)), this.prepareTimeoutMs)
+    try {
+      starting = this.start({ stdio: ['ignore', 'ignore', 'ignore', 'ipc'], signal, prepareTimeoutMs: this.prepareTimeoutMs, onProgress: progress })
+      Promise.resolve(starting).then(late => { if (signal.aborted) void stopUnconfirmed(late) }, () => {})
+      child = await abortable(starting, signal); clearTimeout(timer); aborted(signal); this.child = child; this.preparation = { phase: 'waiting', transferred: 0, total: 0 }
     child.on('exit', () => { if (this.child === child) this.child = null })
     child.on('error', () => { if (this.child === child) this.child = null })
     child.on('message', message => {
@@ -44,17 +66,30 @@ export class PetHost {
         this.uninstalling = false
       })
     })
-    const result = await this.wait(child, value => value?.type === 'dsh-friend-ready' ? { opened: true, version: value.version, capabilities: value.capabilities } : value?.type === 'dsh-friend-forwarded' ? { forwarded: true } : null)
+    const result = await this.wait(child, value => value?.type === 'dsh-friend-ready' ? { opened: true, version: value.version, capabilities: value.capabilities } : value?.type === 'dsh-friend-forwarded' ? { forwarded: true } : null, null, signal)
     this.forwarded = result.forwarded === true; if (result.version) this.version = result.version
+    this.preparation = { phase: 'running', transferred: 0, total: 0 }
     if (this.disposed) this.stop()
     return result
+    } catch (error) {
+      if (signal.aborted) {
+        let settledTimer; await Promise.race([Promise.resolve(starting).catch(() => {}), new Promise(resolve => { settledTimer = setTimeout(resolve, this.settleTimeoutMs) })]); clearTimeout(settledTimer)
+        await stopUnconfirmed(child); if (this.child === child) this.child = null
+      }
+      throw error
+    }
+    finally { clearTimeout(timer) }
   }
   show() {
     const child = this.child, requestId = randomUUID()
     if (!child.connected) return Promise.reject(Error('桌宠还在运行，但控制通道已断开；未新建另一套桌宠'))
     return this.wait(child, value => value?.type === 'dsh-friend-shown' && value.requestId === requestId ? { opened: true, reused: true } : null, callback => child.send({ type: 'dsh-friend-show', requestId }, callback))
   }
-  status() { return { running: Boolean(this.child?.exitCode === null && !this.forwarded), busy: Boolean(this.opening || this.closing || this.updating || this.uninstalling), version: this.version || '' } }
+  status() { return { running: Boolean(this.child?.exitCode === null && !this.forwarded), busy: Boolean(this.opening || this.closing || this.updating || this.uninstalling), version: this.version || '', ...this.preparation, detail: describePreparation(this.preparation), error: this.error, canCancel: Boolean(this.startup && !this.startup.signal.aborted) } }
+  async cancelStartup() {
+    if (!this.startup) return { cancelled: false }
+    this.preparation.phase = 'cancelling'; this.startup.abort(new RuntimeError('cancelled')); await this.opening?.catch(() => {}); return { cancelled: true }
+  }
   async control(action) {
     if (action !== 'settings') throw Error('未知桌宠控制')
     const opened = await this.open()
@@ -63,7 +98,8 @@ export class PetHost {
     return this.wait(child, value => value?.type === 'dsh-friend-controlled' && value.requestId === requestId ? { ok: true } : null, callback => child.send({ type: 'dsh-friend-control', action, requestId }, callback))
   }
   async close() {
-    if (this.opening) await this.opening
+    if (this.startup) await this.cancelStartup()
+    if (this.opening) await this.opening.catch(() => {})
     if (this.closing) return this.closing
     const child = this.child
     if (!child || child.exitCode !== null || this.forwarded) return
@@ -88,6 +124,7 @@ export class PetHost {
     // native process alive to receive the result and release files deliberately.
     if (this.uninstalling || this.updating) return
     this.abort.abort()
+    this.startup?.abort(new RuntimeError('cancelled'))
     if (this.child?.connected) { try { this.child.send({ type: 'dsh-friend-stop', reason: 'host-disabled' }, () => {}) } catch {} }
   }
 }

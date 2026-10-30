@@ -27,7 +27,9 @@ dsh plugin --profile web add github:steady-sakura/dsh-friend
 
 默认已经填好 DeepSeek API 地址和 `deepseek-flash` 模型：填入自己的 API Key，点 **保存设置**，双击桌宠就能聊。也可以修改地址和模型，使用兼容 Chat Completions 的服务。地址填写 API 根路径（例如带 `/v1` 的根地址），不要填写完整 `/chat/completions` 路径。密钥仅在本机设置窗口输入，不要发进 DSH 对话。
 
-第一次启动会检查本插件专属目录中的 Electron；没有时下载官方 Electron 43.3.0，不再自动复用 DSH 或 dsh-pet 的公共运行时。首次下载需要联网，失败可以重试。可通过 `DSH_FRIEND_ELECTRON` 显式指定现有 Electron 可执行文件。
+启动时依次检查 `DSH_FRIEND_ELECTRON`、本插件专属目录、旧 `DSH_HOME/electron`（未设置时为用户目录 `.dsh/electron`）以及本包的 npm Electron。实际运行检查版本 43.3.0 和当前架构，兼容的现成运行时只读复用，不修改 DSH 或 dsh-pet 文件。
+
+没有兼容运行时时，先读取下载库的默认全局缓存，再读 0.7.0 的插件私有缓存；用内置的官方 SHA256 离线校验，命中有效 ZIP 不联网取校验文件。也兼容全局缓存中因旧下载来源不同而分在其他哈希子目录的同版本 ZIP，仅校验通过才复用。均未命中才下载官方 Electron 43.3.0，新内容只解压安装到插件独立目录。准备阶段（含检查、下载和解压）总限时 60 秒，窗口确认另限时 20 秒。控制面板显示阶段和下载字节进度，可点 **取消启动**；关闭请求、插件停用、独立入口 Ctrl+C 也会中止准备。失败或取消后释放忙碌状态，可重试，并提示网络、校验、解压或超时原因。网络无法访问下载源时，可设置 `DSH_FRIEND_ELECTRON` 指向兼容的现成 Electron。
 
 ## 从源码直接运行
 
@@ -167,7 +169,7 @@ npm pack --dry-run
 
 `test:uninstall` 在隔离目录用合成资料和模拟宿主移除结果验证取消、保留、删除、失败四条真实 Electron 流程；不调用用户当前配置的卸载接口，不删除用户资料。
 
-`test:launcher` 使用真实 React、DSH Gateway 和隔离 Electron，验证按钮按需启动、重复显示复用、API 设置、只刷新网页、关闭及重新打开。无需真实会话或 API Key；GitHub Windows 桌面任务会运行此测试及卸载测试。修改 `src/client-ui.mjs` 或共享控制契约后运行 `npm run build:client`，提交生成的 `web/client.js`；单元测试会核对源文件与预编译模块一致。
+`test:launcher` 使用真实 React、DSH Gateway 和隔离 Electron，验证按钮按需启动、重复显示复用、API 设置、只刷新网页、关闭及重新打开，以及准备阶段进度、并发取消、超时提示和恢复重试。无需真实会话或 API Key；GitHub Windows 桌面任务会运行此测试及卸载测试。修改 `src/client-ui.mjs` 或共享控制契约后运行 `npm run build:client`，提交生成的 `web/client.js`；单元测试会核对源文件与预编译模块一致。
 
 API 格式及默认模型依据 [DeepSeek 官方文档](https://api-docs.deepseek.com/quick_start)；密钥保护与屏幕采集分别使用 Electron [safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)、[desktopCapturer](https://www.electronjs.org/docs/latest/api/desktop-capturer)。
 
@@ -188,7 +190,7 @@ API 格式及默认模型依据 [DeepSeek 官方文档](https://api-docs.deepsee
 - **本机备份**：导出 `.dshbackup`，包括聊天、回复留底、当前自选记忆、设置、密钥密文和参考音频。导入原文、精选截图、浏览器缓存及语音模型不包含；完整搬家可另外复制整个数据目录和自选记忆目录。备份含私人资料且不额外加密，请自行妥善保管，不上传仓库。恢复会先在资料目录 `backups/` 保存当前副本，再写回同名文件；不删除备份中没有的文件。路径、内容校验和大小限制不通过就停止；中途失败时保留恢复前副本。恢复后关闭桌宠重新打开。系统密钥加密通常不能跨设备迁移，需重填 API Key。
 - **用户自行更新**：从 DSH 打开桌宠，进入设置点“检查更新”，查看官方仓库 README，再确认安装。仅安装 `steady-sakura/dsh-friend` 的 main 分支已通过“Check plugin”CI 的固定提交，不自动更新；相同版本修正也可手动重装。安装走宿主 `pluginManager.installBundle`，正常包管理失败由宿主恢复配置及锁文件；结果不明不报告成功或自动重试。资料保持独立。结束共享后安装，完成后关闭旧桌宠从 DSH 重新打开；只有宿主要求时才由使用者正常重启 Web。独立入口需要退出后从 DSH 打开更新。
 
-0.7 起 Electron 固定版本安装在 `DSH_HOME/dsh-friend-runtime/electron-43.3.0`（未设置 DSH_HOME 时为用户目录 `.dsh/dsh-friend-runtime/electron-43.3.0`），下载缓存也在插件专属运行时目录。动画、物理代码及动作目录已随本插件独立打包；不依赖 dsh-pet 安装，也不修改旧的 `.dsh/electron`。显式 `DSH_FRIEND_ELECTRON` 是高级用户/测试的自选覆盖。旧共用运行时不会自动删除。
+0.7 起新下载的 Electron 固定版本安装在 `DSH_HOME/dsh-friend-runtime/electron-43.3.0`（未设置 DSH_HOME 时为用户目录 `.dsh/dsh-friend-runtime/electron-43.3.0`）。0.7.1 恢复兼容旧运行时的只读回退，并优先读取默认全局缓存；下载和解压临时文件只写插件独立目录，校验成功后才安装。取消或失败的临时目录可能保留，不自动删除旧内容。动画、物理代码及动作目录已随本插件独立打包；不依赖 dsh-pet 安装，也不修改旧的 `.dsh/electron`。显式 `DSH_FRIEND_ELECTRON` 是高级用户/测试的自选覆盖。旧共用运行时不会自动删除。
 
 声音来源：[Sherpa-ONNX](https://github.com/k2-fsa/sherpa-onnx)、[Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)。署名和许可见 `THIRD_PARTY_NOTICES.md`。可选克隆本轮只验证接口协议，未以真实 CosyVoice 大模型验证音质和延迟；内置 Kokoro 中文合成已在 Windows 实测。
 
@@ -198,7 +200,8 @@ API 格式及默认模型依据 [DeepSeek 官方文档](https://api-docs.deepsee
 
 | 版本 | 更新内容 |
 | --- | --- |
-| **0.7.0** | 分栏设置导航、聊天发言者与时间层级、共享空状态与来源选择反馈；窄屏、长内容、键盘焦点与减少动态效果支持。修复动作编号混入正文，保留原始回执且不执行正文尾部编号；紧凑气泡限高并支持滚动，保留上翻位置。独立 Electron 运行时与下载缓存；自选记忆目录、复制迁移、离线可恢复设置入口和外部目录卸载保护。新增本机 Kokoro 中文音色、调音试听及可选本机 CosyVoice 参考音频克隆；加入暂时安静、工具能力测试、本机备份恢复，以及固定官方 CI 提交的用户确认更新入口。 |
+| **0.7.1** | 修复 0.7.0 启动永久忙碌：恢复旧 Electron 路径的版本与架构验证、只读复用；优先使用默认全局缓存及固定官方 SHA256，缓存可离线校验。准备阶段增加 60 秒总超时、可终止子进程、阶段与字节进度、取消启动按钮及可归因错误，关闭/停用可中止准备，失败后可重试。补充真实网页取消、超时和恢复测试。 |
+| **0.7.0** | 分栏设置导航、聊天发言者与时间层级、共享空状态与来源选择反馈；窄屏、长内容、键盘焦点与减少动态效果支持。修复动作编号混入正文，保留原始回执且不执行正文尾部编号；紧凑气泡限高并支持滚动，保留上翻位置。独立 Electron 运行时与下载缓存；自选记忆目录、复制迁移、离线可恢复设置入口和外部目录卸载保护。新增本机 Kokoro 中文音色、调音试听及可选本机 CosyVoice 参考音频克隆；加入暂时安静、工具能力测试、本机备份恢复，以及固定官方 CI 提交的用户确认更新入口。此版运行时迁移存在旧路径与缓存回退缺失、准备阶段无超时的回归，建议使用 0.7.1 或更新版。 |
 | **0.6.0** | 普通正文与原生控制工具分离；保留手动旧 JSON 兼容模式。检查生成结束状态，截断、中断及缺少状态的文字只留底；坏控制参数不吞正常正文。新增“未发原话与回执”、分页原文、结束提醒及按消息编号核对本机记录；区分安静、失败、结果不明和本机已保存，防止查看触发重放。收到新输入取消旧生成，索引异常可降级为普通聊天；新增留底随备份并纳入可选卸载清理。 |
 | **0.5.1** | 修复 0.5.0 网页模块读取 `remote.friendLauncher` 时缺少依赖注入导致 Web boot 失败的问题；改为挂载后通过子作用域注入。可选控制服务失败时保留 Web 主界面，新增真实 Cordis、浏览器 Remote 和插槽注册器的激活回归测试。 |
 | **0.5.0** | 增加 DSH 侧栏“小鲸陪伴”按钮：按需打开/显示、设置、关闭、卸载和定位独立启动文件；不用创建模型会话。独立启动脚本纳入安装包，网页刷新不重建桌宠，增加 Windows 按钮/卸载集成 CI。此版本存在上列网页激活缺陷，应使用 0.5.1 或更新版本。 |
