@@ -36,7 +36,7 @@ function view(next, details = false) {
   if (mode === next && expanded === details && document.body.classList.contains(next + '-mode')) return
   const bottom = nearBottom(); mode = next; expanded = details === true
   document.body.classList.toggle('bubble-mode', next === 'bubble'); document.body.classList.toggle('panel-mode', next === 'panel'); document.body.classList.toggle('bubble-expanded', expanded && next === 'bubble')
-  $('view-label').textContent = next === 'panel' ? '聊天面板' : '桌面陪伴'; $('switch-view').textContent = next === 'panel' ? '返回气泡' : '面板'; $('open-chat').textContent = expanded ? '收起记录' : '聊天记录'; $('open-chat').setAttribute('aria-expanded', String(expanded))
+  $('view-label').textContent = next === 'panel' ? '聊天面板' : '桌面陪伴'; $('switch-view').textContent = next === 'panel' ? '返回桌边聊天' : '打开聊天面板'; $('open-chat').textContent = expanded ? '收起记录' : '聊天记录'; $('open-chat').setAttribute('aria-expanded', String(expanded))
   if (bottom) requestAnimationFrame(scrollLatest)
   queueFit()
 }
@@ -86,14 +86,14 @@ function render(value) {
   snapshot = value; view(value.chatView, value.bubbleExpanded === true)
   const { chat, capture } = value; $('voice').checked = value.voice; $('companion-name').textContent = value.name || '小鲸'
   const upkeep = value.maintenance, paused = Boolean(upkeep?.active || upkeep?.needsReopen)
-  const status = upkeep?.message || (!chat.opened ? '桌面聊天已结束。' : !chat.ready ? '先在 API 设置中填入密钥。' : chat.working ? '正在处理当前请求……' : chat.pending ? '消息已保存，等待接话。' : '桌面聊天可用。')
+  const status = upkeep?.message || (!chat.opened ? '桌面聊天已结束。' : !chat.ready ? '先在 设置中填入密钥。' : chat.working ? '正在处理当前请求……' : chat.pending ? '消息已保存，等待接话。' : '桌面聊天可用。')
   const outcome = !chat.working && !chat.pending && chat.lastOutcome?.status === 'quiet' ? ' 本轮已完成，没有发言。' : !chat.working && chat.lastOutcome?.status === 'failed' ? ' 本轮未确认正常回复，可查看“未发原话”。' : !chat.working && chat.lastOutcome?.status === 'unknown' ? ' 本轮发送结果待核对，请查看“发送回执”。' : ''
   document.body.classList.toggle('connection-problem', paused || !chat.opened || !chat.ready || Boolean(value.voiceProblem) || Boolean(value.memoryIssue) || Boolean(value.error))
   document.body.classList.toggle('has-outcome', Boolean(outcome))
   $('status').textContent = (upkeep?.message || value.error || status) + (capture.active ? ' 画面共享中，可按需分析：' + capture.source : capture.phase === 'paused' ? ' 画面分析已暂停。' : ' 当前没有共享画面。') + (capture.message ? ' ' + capture.message : '') + (browsing ? paused ? ' 正在翻旧记录。' : ' 正在翻旧记录，输入仍发到当前聊天。' : '') + (value.voiceProblem ? ' ' + value.voiceProblem : '') + (value.memoryIssue ? ' ' + value.memoryIssue : '')
   if (outcome && !paused) $('status').textContent = outcome.trim() + ' ' + $('status').textContent
   if (pickerNotice) $('status').textContent = pickerNotice.message
-  $('status').title = $('status').textContent; $('pause').textContent = capture.phase === 'paused' ? '继续看' : '暂停看'; $('pause').disabled = capture.phase === 'off'; $('send').disabled = sending || !chat.ready || !chat.opened
+  $('status').title = $('status').textContent; $('pause').textContent = capture.phase === 'paused' ? '继续观察' : '暂停观察'; $('pause').disabled = capture.phase === 'off'; $('send').disabled = sending || !chat.ready || !chat.opened
   $('look').disabled = !capture.active || chat.working; $('keep').disabled = !capture.latestFrame
   $('input').readOnly = paused; $('share').disabled = paused; $('voice').disabled = paused; $('look').disabled ||= paused; $('keep').disabled ||= paused
   renderCompact(chat.history)

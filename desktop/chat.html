@@ -3,8 +3,8 @@
 <body class="bubble-mode"><main class="card">
   <header><span class="drag identity" title="拖动这里，调整与小鲸的距离"><strong id="companion-name">小鲸</strong><small id="view-label">桌面陪伴</small></span><button id="open-chat" class="bubble-only" title="展开聊天记录" aria-expanded="false">聊天记录</button><button id="switch-view" title="打开聊天面板">面板</button><button id="fold" title="收起聊天" aria-label="收起聊天">－</button></header>
   <p id="status" role="status">正在连接……</p>
-  <div class="tools panel-only"><button id="share">共享应用 / 屏幕</button><button id="pause">暂停看</button><button id="stop">结束共享</button><button id="look">看一眼</button></div>
-  <details id="chat-preferences" class="panel-only settings"><summary>声音与设置</summary><div class="settings-content"><label><input type="checkbox" id="voice">本机语音朗读</label><button id="settings">API 与声音设置</button><details><summary>保留一张定格</summary><input id="keep-note" maxlength="2000" placeholder="想留下这张图的原因" aria-label="保存画面的想法"><button id="keep">保存当前定格</button></details></div></details>
+  <div class="tools panel-only"><button id="share">选择窗口并共享</button><button id="pause">暂停观察</button><button id="stop">结束共享</button><button id="look">立即看一次</button></div>
+  <details id="chat-preferences" class="panel-only settings"><summary>朗读开关与更多设置</summary><div class="settings-content"><label><input type="checkbox" id="voice">本机语音朗读</label><button id="settings">打开全部设置</button><details><summary>保存一张共享截图</summary><input id="keep-note" maxlength="2000" placeholder="想留下这张图的原因" aria-label="保存画面的想法"><button id="keep">保存当前截图</button></details></div></details>
   <div id="last-message" class="bubble-only" tabindex="0" role="log" aria-label="当前这一轮回复，可滚动读完；之前的内容请打开聊天记录" aria-live="polite">想说什么，直接写在这里。</div>
   <div class="history-tools"><button id="history-sessions" aria-controls="session-browser" aria-expanded="false">历史会话</button><button id="history-current" hidden>返回当前</button><button id="older" hidden>查看更早记录</button></div>
   <div id="session-browser" hidden><div id="session-list"></div><button id="sessions-more" hidden>更多会话</button></div><p id="history-label" hidden></p>

@@ -26,6 +26,7 @@ async function start() {
     return
   }
   await app.whenReady()
+  Menu.setApplicationMenu(null)
   const [{ Store }, { Vault }, { API }, { Companion }] = await Promise.all([import('../src/store.mjs'), import('../src/config.mjs'), import('../src/api.mjs'), import('../src/companion.mjs')])
   const store = new Store(dataDir); await store.init()
   const vault = new Vault(store, safeStorage); await vault.init()
@@ -183,6 +184,15 @@ async function start() {
   ipcMain.handle('friend-capture', async (event, action, body = {}) => {
     if (!trusted(event, captureWindow, 'capture.html')) throw Error('共享入口无效')
     if (closing) throw Error('共享已停止')
+    if (action === 'interval') {
+      if (engine.closed || engine.maintenance) throw Error('当前正在更新或关闭，请稍后调整')
+      const seconds = Number(body.seconds)
+      if (![5, 10, 20, 30, 60, 120].includes(seconds)) throw Error('请选择有效的观察间隔')
+      const config = { ...engine.config, observeSeconds: seconds }
+      await store.write('settings.json', config)
+      engine.config = config
+      return { interval: seconds }
+    }
     if (action === 'sources') return captureConsent.list(body.type)
     if (action === 'select') {
       if (!engine.ready()) throw Error('请先设置 API Key')
@@ -228,7 +238,7 @@ async function start() {
     ask: async () => {
       if (!hostInfo?.canUninstall || !process.connected) throw Error('请先退出独立启动的桌宠，再在 DSH 中用 /friend 打开，然后从设置卸载。未改动插件或资料。')
       const buttons = ['取消', '卸载并保留资料', ...(dataOwner.owned ? ['卸载并删除资料'] : [])]
-      const result = await dialog.showMessageBox({ type: 'warning', title: '卸载 DSH Friend', message: '卸载前，要保留本机资料吗？', detail: '将从 DSH 配置「' + hostInfo.profile + '」移除 dsh-friend。\n资料目录：' + dataDir + '\n\n删除范围：聊天、插件日记与摘记、草稿、精选、API 设置及本插件缓存。导入的原始文件夹、源码项目和共用运行时保留。\n多个 DSH 配置共用此资料目录；删除资料会影响它们。' + (dataOwner.owned ? '' : '\n\n此目录归属不能确认，只允许保留资料：' + dataOwner.reason), buttons, defaultId: 0, cancelId: 0, noLink: true })
+      const result = await dialog.showMessageBox({ type: 'warning', title: '卸载 DSH Friend', message: '卸载前，要保留本机资料吗？', detail: '将从 DSH 配置「' + hostInfo.profile + '」移除 dsh-friend。\n资料目录：' + dataDir + '\n\n删除范围：聊天、插件日记与摘记、草稿、精选、设置及本插件缓存。导入的原始文件夹、源码项目和共用运行时保留。\n多个 DSH 配置共用此资料目录；删除资料会影响它们。' + (dataOwner.owned ? '' : '\n\n此目录归属不能确认，只允许保留资料：' + dataOwner.reason), buttons, defaultId: 0, cancelId: 0, noLink: true })
       return result.response === 1 ? 'keep' : result.response === 2 && dataOwner.owned ? 'delete' : 'cancel'
     },
     quiesce,
@@ -311,7 +321,7 @@ async function start() {
       Menu.buildFromTemplate([
         { label: '聊天气泡', click: safe(() => chat.show('bubble', true, { expanded: true })) },
         { label: '聊天面板', click: safe(() => chat.show('panel', true)) },
-        { label: 'API 与偏好设置', click: safe(openSettings) },
+        { label: '设置', click: safe(openSettings) },
         { label: '动作（' + actions.length + '）', enabled: !engine.maintenance && !engine.closed, submenu: [...new Set(actions.map(a => a.group))].map(group => ({ label: group, submenu: actions.filter(a => a.group === group).map(a => ({ label: a.label, click: safe(async () => { engine.act(a.id); await engine.interact('action', a.id) }) })) })) },
         { type: 'separator' }, { label: '共享应用 / 屏幕…', enabled: !engine.maintenance && !engine.closed, click: safe(openCapture) },
         { label: '暂停 / 继续看屏幕', enabled: !engine.maintenance && !engine.closed, click: safe(() => engine.capture.phase === 'paused' ? engine.resumeCapture() : engine.pauseCapture()) },

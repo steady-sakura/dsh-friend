@@ -48,3 +48,12 @@ $('start').onclick = async () => {
 }
 window.addEventListener('beforeunload', () => { flow.epoch++; flow.clearLocal() })
 requestAnimationFrame(() => { void list().catch(problem) }); setInterval(() => { void flow.tick() }, 1000)
+
+const interval = $('observe-interval')
+window.capture.state().then(state => { interval.value = String(state.interval); interval.disabled = false }).catch(problem)
+interval.onchange = async () => {
+  interval.disabled = true
+  try { const result = await window.capture.interval({ seconds: Number(interval.value) }); interval.value = String(result.interval); $('interval-status').textContent = '已保存，观察间隔为 ' + result.interval + ' 秒。' }
+  catch (error) { $('interval-status').textContent = '保存失败，请重新选择后重试。'; problem(error) }
+  finally { interval.disabled = false }
+}

@@ -11,7 +11,7 @@ function render(value) {
   $('data-dir').textContent = value.dataDir
   $('memory-path').textContent = value.memoryPath
   if (value.voiceSettings) renderVoice(value.voiceSettings)
-  if (value.desktop) $('runtime-version').textContent = '当前运行版本 ' + value.desktop.version + ' · 草稿 / 历史 / 采集协议已加载'
+  if (value.desktop) $('runtime-version').textContent = '当前运行版本 ' + value.desktop.version
   renderImports(value.imports)
   renderMemory(value.memory); consentLabel()
 }

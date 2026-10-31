@@ -36,7 +36,7 @@ async function run() {
   await click('🐋 小鲸陪伴'); await readyButton('打开桌宠'); await click('打开桌宠'); await readyButton('显示桌宠')
   assert.equal(launches, 1); const original = host.child.pid
   await click('显示桌宠'); await readyButton('显示桌宠'); assert.equal(host.child.pid, original)
-  await click('API 设置'); await readyButton('显示桌宠')
+  await click('设置'); await readyButton('显示桌宠')
   // Reload only the browser surface, retaining the same controller and pet.
   await window.reload(); await until(() => js('Boolean(window.testReady)')); await click('🐋 小鲸陪伴'); await readyButton('显示桌宠'); assert.equal(host.child.pid, original)
   await click('关闭桌宠'); await readyButton('打开桌宠'); assert.equal(host.status().running, false)

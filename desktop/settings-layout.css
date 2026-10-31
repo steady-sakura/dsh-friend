@@ -1,0 +1,60 @@
+/* Settings navigation and responsive shell. Loaded after shared controls. */
+:root{--friend-ink:#233e52;--friend-muted:#516d7c;--friend-accent:#267d9b;--friend-border:#cfdee7;--ease-out:cubic-bezier(.23,1,.32,1)}
+[hidden]{display:none!important}
+.settings-page{height:100vh;overflow:hidden}
+.settings-shell{display:grid;grid-template-columns:168px minmax(0,1fr);height:100%}
+.settings-sidebar{padding:30px 14px 18px;background:#eaf3f8;border-right:1px solid var(--friend-border);overflow:auto}
+.settings-brand{margin:0 10px 24px;font-size:17px;font-weight:650;letter-spacing:-.3px}
+#settings-nav{display:flex;flex-direction:column;gap:5px}
+#settings-nav button{background:transparent;border:0;text-align:start;min-height:42px;margin:0;padding:10px 12px;border-radius:8px;white-space:normal;overflow-wrap:anywhere}
+#settings-nav button[aria-current=page]{background:#d4eaf4;color:#15495e;font-weight:650}
+#settings-nav button:active{transform:none}
+.sidebar-note{margin:28px 10px 0;color:var(--friend-muted);font-size:11px;line-height:1.8}
+.settings-page main{max-width:none;min-width:0;overflow:auto;padding:32px 32px 0;scrollbar-gutter:stable}
+.settings-heading h1{margin:0 0 10px;font-size:25px;line-height:1.35}
+.settings-heading h1:focus{outline:none}
+.settings-heading .intro{margin:0 0 10px;max-width:60ch}
+.settings-page #runtime-version{margin:0 0 24px;font-size:11px}
+.settings-page section{box-shadow:none;border:1px solid var(--friend-border);margin:0 0 20px;padding:22px;border-radius:12px}
+.settings-page section h2{font-size:16px;line-height:1.5}
+.settings-page .bar{bottom:0;margin-top:16px;padding:15px 0 18px;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--friend-border);background:#f4f9fc;backdrop-filter:none;z-index:2}
+.settings-page #status{margin:0;flex-basis:100%;font-size:12px;line-height:1.6}
+.settings-page #status:empty{display:none}
+.settings-page input:not([type=checkbox]),.settings-page textarea,.settings-page select{min-width:0;width:100%;max-width:100%}
+.settings-page .path{font-size:12px;line-height:1.7;max-height:160px;overflow:auto;white-space:pre-wrap}
+.settings-page button{max-width:100%;overflow-wrap:anywhere}
+.settings-page button:not(#settings-nav button){transition:transform 160ms var(--ease-out)}
+.settings-page button:not(#settings-nav button)[data-pressed]{transform:scale(.97)}
+.settings-page [role=status]{font-variant-numeric:tabular-nums}
+@media(hover:hover) and (pointer:fine){#settings-nav button:hover{background:#dfeef5}
+#settings-nav button[aria-current=page]:hover{background:#cbe4ef}
+}
+@media(prefers-reduced-motion:reduce){.settings-page button{transition:none!important}
+.settings-page button:active{transform:none!important}
+}
+@media(max-width:700px){.settings-shell{grid-template-columns:138px minmax(0,1fr)}
+.settings-sidebar{padding:24px 8px}
+.settings-brand{font-size:15px}
+.settings-page main{padding:24px 20px 0}
+.settings-page section{padding:18px}
+.sidebar-note{font-size:10px}
+}
+@media(max-width:540px){.settings-shell{display:flex;flex-direction:column}
+.settings-sidebar{flex-shrink:0;padding:10px 14px;border-right:0;border-bottom:1px solid var(--friend-border);overflow:visible}
+.settings-brand,.sidebar-note{display:none}
+#settings-nav{flex-direction:row;flex-wrap:wrap;gap:4px}
+#settings-nav button{flex:1;min-width:90px;padding:7px 9px;min-height:36px;font-size:12px}
+.settings-page main{flex:1;min-height:0;padding:20px 16px 0}
+.settings-heading h1{font-size:22px}
+.settings-page section{padding:16px}
+}
+
+/* Keep long labels and keyboard focus readable in narrow windows. */
+.settings-page section,.settings-heading,.settings-page label{min-width:0;overflow-wrap:anywhere}
+.settings-page section:focus-within{border-color:var(--friend-accent)}
+.settings-page main{scroll-padding-block:20px 100px;scrollbar-width:thin;scrollbar-color:#9bbbc9 transparent}
+.settings-page input,.settings-page textarea,.settings-page select{scroll-margin-block:20px 100px}
+.settings-page textarea{resize:vertical;min-height:90px}
+.settings-page button:disabled:hover{background:#e8f2f7}
+.settings-page .primary:disabled:hover{background:var(--friend-accent)}
+@media(prefers-reduced-motion:reduce){.settings-page button[data-pressed]{transform:none!important}}

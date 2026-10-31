@@ -1,12 +1,12 @@
 // Navigation changes presentation only; it never requests additional permissions.
 window.friendSettingsNavigation = (() => {
   const routes = [
-    { id: 'connection', name: '连接与模型', intro: '填好 API 就能聊天。接口能力和兼容模式也在这里。', headings: ['聊天 API', '回复方式', '接口工具能力'] },
-    { id: 'companion', name: '陪伴习惯', intro: '称呼、相处方式和主动活动的节奏，由你来调整。', headings: ['它想怎么陪你', '暂时安静'] },
-    { id: 'voice', name: '声音', intro: '选一个中文音色，慢慢调成你喜欢的声音。所有内置合成都在本机完成。', headings: ['声音与调音'] },
-    { id: 'screen', name: '一起看屏幕', intro: '设置支持图片的接口。共享哪些内容，仍由你每次明确选择。', headings: ['一起看屏幕'] },
-    { id: 'memory', name: '记忆与检索', intro: '把角色、只读导入和可写记忆分清楚，旧事才有可靠的出处。', headings: ['角色提示词与记忆', '日记、长期记忆与检索', '记忆存储位置'] },
-    { id: 'maintenance', name: '资料与更新', intro: '管理本机资料、备份和更新。涉及替换或移除时，会再显示具体确认。', headings: ['只属于这台电脑的记录', '本机备份与恢复', '插件更新', '卸载插件'] },
+    { id: 'connection', name: '聊天连接', intro: '第一次使用：填入服务商提供的 API Key，点击底部“保存设置”，再点“测试聊天连接”。不知道其他选项怎么填时，保留默认值。', headings: ['聊天 API', '回复方式', '接口工具能力'] },
+    { id: 'companion', name: '称呼与主动聊天', intro: '在这里改名字、性格，以及是否主动找你聊天。想暂时不被打扰，可使用“暂时安静”。', headings: ['它想怎么陪你', '暂时安静'] },
+    { id: 'voice', name: '语音朗读', intro: '先下载离线中文音色，再点“保存并试听”。要朗读聊天回复，还需在聊天面板勾选“本机语音朗读”。', headings: ['声音与调音'] },
+    { id: 'screen', name: '屏幕共享', intro: '这里设置模型能否看图片。开始共享请回聊天面板，点“选择窗口并共享”；共享窗口也能调整多久看一次。', headings: ['一起看屏幕'] },
+    { id: 'memory', name: '记忆与查找', intro: '想让它记住事情，在这里开启本机记忆；想查过去的内容，使用下方搜索框。把记忆发给模型需要另行勾选同意。', headings: ['角色提示词与记忆', '日记、长期记忆与检索', '记忆存储位置'] },
+    { id: 'maintenance', name: '备份、更新与卸载', intro: '换电脑或更新前，先导出资料备份。检查更新、恢复备份和卸载插件也在这里；删除或替换前会再次确认。', headings: ['只属于这台电脑的记录', '本机备份与恢复', '插件更新', '卸载插件'] },
   ]
   const nav = document.getElementById('settings-nav'), form = document.getElementById('form'), title = document.getElementById('settings-title'), intro = document.getElementById('settings-intro')
   if (!nav || !form) return { current: 'connection', show: () => {} }
@@ -29,7 +29,7 @@ window.friendSettingsNavigation = (() => {
   let remembered
   try { remembered = localStorage.getItem('friend-settings-section') } catch {}
   show(remembered)
-  document.addEventListener('pointerdown', event => { const button = event.target.closest('button'); if (button && !button.closest('#settings-nav')) button.setAttribute('data-pressed', '') })
+  document.addEventListener('pointerdown', event => { const button = event.target.closest('button'); if (button && !button.disabled && !button.closest('#settings-nav')) button.setAttribute('data-pressed', '') })
   const release = () => { for (const button of document.querySelectorAll('button[data-pressed]')) button.removeAttribute('data-pressed') }
   document.addEventListener('pointerup', release); document.addEventListener('pointercancel', release); window.addEventListener('blur', release)
   let firstInvalid = null
